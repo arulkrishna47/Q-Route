@@ -1,0 +1,10 @@
+{
+  "source": "OpenStreetMap",
+  "query": "Koramangala, Bengaluru, India",
+  "fetch_timestamp_utc": "2026-08-31T12:50:07.789655Z",
+  "nodes_count": 1416,
+  "edges_count": 3490,
+  "attribution": "\u00a9 OpenStreetMap contributors",
+  "capacity_methodology": "Derived from lane counts and highway classification planning estimates.",
+  "speed_methodology": "OSM maxspeed tag where present, default by class otherwise."
+}

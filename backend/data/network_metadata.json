@@ -1,0 +1,10 @@
+{
+  "source": "OpenStreetMap",
+  "query": "Mylapore, Chennai, India",
+  "fetch_timestamp_utc": "2026-08-30T14:22:44.992081Z",
+  "nodes_count": 902,
+  "edges_count": 2223,
+  "attribution": "\u00a9 OpenStreetMap contributors",
+  "capacity_methodology": "Derived from lane counts and highway classification planning estimates.",
+  "speed_methodology": "OSM maxspeed tag where present, default by class otherwise."
+}
