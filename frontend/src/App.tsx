@@ -3,7 +3,7 @@ import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Tooltip, useMapEvents, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceDot } from 'recharts';
 import { Activity, Map as MapIcon, Sliders, Database, Info, GitMerge, FileText, Settings, HelpCircle, AlertTriangle, Send, Zap } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -69,6 +69,7 @@ function App() {
   const [replayIteration, setReplayIteration] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(300);
+
   
   // Calibration thresholds
   const [peakStartHour, setPeakStartHour] = useState(8);
@@ -91,6 +92,23 @@ function App() {
   const [baselineRes, setBaselineRes] = useState<any>(null);
   const [qpsoRes, setQpsoRes] = useState<any>(null);
   const [benchmarkRes, setBenchmarkRes] = useState<any>(null);
+  
+  useEffect(() => {
+    let interval: any;
+    if (isPlaying && qpsoRes && qpsoRes.edge_volumes_history) {
+      interval = setInterval(() => {
+        setReplayIteration((prev) => {
+          if (prev === null) return 0;
+          if (prev >= qpsoRes.edge_volumes_history.length - 1) {
+            setIsPlaying(false);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, playbackSpeed);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, qpsoRes, playbackSpeed]);
   const [benchmarking, setBenchmarking] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [explainData, setExplainData] = useState<any>(null);
@@ -300,7 +318,7 @@ function App() {
     timeSavedMins = (baselineRes.metrics.total_travel_time - qpsoRes.metrics.total_travel_time) / 60;
     bottlenecksResolved = baselineRes.metrics.capacity_violations_count - qpsoRes.metrics.capacity_violations_count;
     
-    if (timeSavedMins <= 0 && weights.time >= 10.0 && baselineRes.metrics.capacity_violations_count === 0) {
+    if (timeSavedMins <= 0 && baselineRes.metrics.capacity_violations_count === 0) {
       explanationText = "In low-demand, uncongested scenarios, the baseline shortest-path routing is already optimal. Q-ROUTE's stochastic search found a routing that is nearly as fast, but since there were no bottlenecks to avoid, travel time could not be further improved.";
     } else if (timeSavedMins < 0) {
       explanationText = "Travel time increased because your current settings prioritize lower emissions and fewer capacity violations far more heavily than raw speed. Try increasing the Travel Time weight to see faster (but more congested) routes instead.";
@@ -387,8 +405,8 @@ function App() {
     const center = [(Math.max(...lats) + Math.min(...lats)) / 2, (Math.max(...lons) + Math.min(...lons)) / 2];
 
     return (
-      <div className="map-wrapper" style={{height: '100%', position: 'relative'}}>
-        <div className="map-overlay">
+      <div className="map-wrapper" style={{height: '100%', position: 'relative', display: 'flex', flexDirection: 'column'}}>
+        <div style={{padding: '0.5rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)'}}>
           <h2>{whatIfMode && Object.keys(modifiedCapacities).length > 0 ? "WHAT-IF SCENARIO: " : ""}{title}</h2>
           <div className="map-subtitle">{subtitle}</div>
           <div className="map-context" style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px'}}>
@@ -410,7 +428,9 @@ function App() {
           </div>
         </div>
         
-        <MapContainer center={center as any} zoom={15} style={{ height: '100%', width: '100%' }}>
+        <div style={{flex: 1, position: 'relative', minHeight: 0}}>
+          <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0}}>
+            <MapContainer center={center as any} zoom={15} style={{ height: '100%', width: '100%' }}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -429,10 +449,12 @@ function App() {
             
             let vol = 0;
             if (resultData && resultData.edge_volumes) {
+                vol = resultData.edge_volumes[i];
                 if (isQpso && replayIteration !== null && resultData.edge_volumes_history) {
-                   vol = resultData.edge_volumes_history[replayIteration][i];
-                } else {
-                   vol = resultData.edge_volumes[i];
+                   const histVols = resultData.edge_volumes_history[replayIteration];
+                   if (histVols && histVols.length > i) {
+                       vol = histVols[i];
+                   }
                 }
             }
 
@@ -464,6 +486,7 @@ function App() {
             );
           })}
         </MapContainer>
+        </div>
         
         {isQpso && qpsoRes && qpsoRes.edge_volumes_history && (
             <div style={{
@@ -489,6 +512,7 @@ function App() {
                 <button className="btn" onClick={() => { setReplayIteration(null); setIsPlaying(false); }}>End</button>
             </div>
         )}
+        </div>
       </div>
     );
   };

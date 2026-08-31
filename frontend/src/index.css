@@ -228,6 +228,9 @@ h1, h2, h3, h4, h5, h6, .header-text {
 .main-content {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .impact-banner {
@@ -327,7 +330,7 @@ h1, h2, h3, h4, h5, h6, .header-text {
 .maps-container {
   display: flex;
   flex: 1;
-  height: 100%;
+  min-height: 400px;
 }
 
 .map-wrapper {
