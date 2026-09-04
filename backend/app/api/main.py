@@ -5,7 +5,6 @@ from typing import Optional, Dict
 import os
 import json
 import networkx as nx
-import osmnx as ox
 import numpy as np
 import datetime
 import time
@@ -53,7 +52,7 @@ def load_data():
                 if not (os.path.exists(graph_path) and os.path.exists(demand_path) and os.path.exists(routes_path) and os.path.exists(meta_path)):
                     continue
                     
-                G = ox.load_graphml(graph_path)
+                G = nx.read_graphml(graph_path)
                 with open(demand_path) as f:
                     demand_data = json.load(f)['demand']
                     
@@ -134,8 +133,8 @@ def get_network(location: str = 'koramangala'):
     G = locations_state[location]['G']
     metadata = locations_state[location]['metadata']
     
-    nodes = [{'id': n, 'lat': data['y'], 'lon': data['x']} for n, data in G.nodes(data=True)]
-    edges = [{'u': u, 'v': v, 'k': k, 'capacity': data.get('capacity'), 'name': data.get('name', '')} 
+    nodes = [{'id': n, 'lat': float(data['y']), 'lon': float(data['x'])} for n, data in G.nodes(data=True) if 'y' in data and 'x' in data]
+    edges = [{'u': u, 'v': v, 'k': k, 'capacity': float(data.get('capacity', 800)), 'name': data.get('name', '')} 
              for u, v, k, data in G.edges(keys=True, data=True)]
              
     return {"nodes": nodes, "edges": edges, "metadata": metadata}
