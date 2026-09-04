@@ -311,7 +311,7 @@ def explain_od_pair(od_id: str, location: str):
     for u, v in p0_edges:
         idx = edge_indices.get((u, v, 0))
         if idx is not None:
-            cap = edge_data['capacities'][idx]
+            cap = state['edge_data']['capacities'][idx]
             if cap < worst_cap:
                 worst_cap = cap
                 worst_edge = (u, v)
@@ -338,5 +338,7 @@ def explain_od_pair(od_id: str, location: str):
         "paths": paths_info,
         "baseline_path": path0,
         "qpso_path": path1,
+        "baseline_free_flow": p0_time,
+        "qpso_free_flow": p1_time,
         "explanation": explanation_text
     }
