@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict
@@ -19,6 +19,7 @@ from app.optimization.qpso import qpso_optimize
 from app.optimization.baselines import run_dijkstra_baseline, run_ga_baseline, run_traffic_aware_dijkstra
 
 app = FastAPI(title="Q-ROUTE API")
+router = APIRouter()
 
 app.add_middleware(
     CORSMiddleware,
@@ -113,20 +114,20 @@ def save_experiment(algo, weights, result, scenario="default", suggestion_shown=
 def startup_event():
     load_data()
 
-@app.get("/")
+@router.get("/")
 def read_root():
     return {"status": "Q-ROUTE API is running"}
 
-@app.get("/health")
+@router.get("/health")
 def health_check():
     return {"status": "ok", "locations_loaded": len(locations_state)}
 
-@app.get("/locations")
+@router.get("/locations")
 def get_locations():
     return [{"id": k, "name": v['metadata'].get('query', k)} for k, v in locations_state.items()]
 
-@app.get("/network")
-def get_network(location: str):
+@router.get("/network")
+def get_network(location: str = 'koramangala'):
     if location not in locations_state:
         raise HTTPException(status_code=404, detail="Location not found")
         
@@ -167,8 +168,8 @@ def apply_what_if(local_edge_data, modified_capacities):
             
     return new_edge_data
 
-@app.post("/optimize/baseline")
-def run_baseline(weights: WeightsParams, location: str):
+@router.post("/optimize/baseline")
+def run_baseline(weights: WeightsParams, location: str = 'koramangala'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -180,8 +181,8 @@ def run_baseline(weights: WeightsParams, location: str):
         save_experiment("Baseline", w_dict, res, scenario="what-if" if weights.modified_capacities else "default", suggestion_shown=weights.suggestion_shown, suggestion_followed=weights.suggestion_followed, location=location)
     return res
 
-@app.post("/optimize/qpso")
-def run_qpso(weights: WeightsParams, location: str, particles: int = 20, iterations: int = 50):
+@router.post("/optimize/qpso")
+def run_qpso(weights: WeightsParams, location: str = 'koramangala', particles: int = 20, iterations: int = 50):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -194,8 +195,8 @@ def run_qpso(weights: WeightsParams, location: str, particles: int = 20, iterati
         save_experiment("QPSO", w_dict, res, scenario="what-if" if weights.modified_capacities else "default", suggestion_shown=weights.suggestion_shown, suggestion_followed=weights.suggestion_followed, location=location)
     return res
 
-@app.post("/optimize/ga")
-def run_ga(weights: WeightsParams, location: str, pop_size: int = 20, iterations: int = 50):
+@router.post("/optimize/ga")
+def run_ga(weights: WeightsParams, location: str = 'koramangala', pop_size: int = 20, iterations: int = 50):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -208,8 +209,8 @@ def run_ga(weights: WeightsParams, location: str, pop_size: int = 20, iterations
         save_experiment("Genetic Algorithm", w_dict, res, scenario="what-if" if weights.modified_capacities else "default", suggestion_shown=weights.suggestion_shown, suggestion_followed=weights.suggestion_followed, location=location)
     return res
 
-@app.get("/experiments")
-def get_experiments(location: str):
+@router.get("/experiments")
+def get_experiments(location: str = 'koramangala'):
     if not location: return []
     exp_file = os.path.join(DATA_DIR, location, 'experiments.json')
     if os.path.exists(exp_file):
@@ -217,8 +218,8 @@ def get_experiments(location: str):
             return json.load(f)
     return []
 
-@app.post("/benchmark")
-def run_benchmarks(weights: WeightsParams, location: str, seeds: int = 10, multiplier: float = 1.0):
+@router.post("/benchmark")
+def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds: int = 10, multiplier: float = 1.0):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -249,64 +250,73 @@ def run_benchmarks(weights: WeightsParams, location: str, seeds: int = 10, multi
         'time_mean': t_res['metrics']['total_travel_time']
     }
     
-    def eval_stochastic(func, name, **kwargs):
-        costs, times = [], []
-        for seed in range(seeds):
-            np.random.seed(seed)
-            res = func(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, **kwargs)
-            costs.append(res['fitness'])
-            times.append(res['metrics']['total_travel_time'])
-        
-        costs = np.array(costs)
-        results[name] = {
-            'cost_mean': float(np.mean(costs)), 'cost_std': float(np.std(costs)),
-            'cost_min': float(np.min(costs)), 'cost_max': float(np.max(costs)),
-            'time_mean': float(np.mean(times))
-        }
-
-    # 3. GA
-    eval_stochastic(run_ga_baseline, 'Genetic Algorithm', pop_size=10, max_iter=20)
+    # 3. GA over seeds
+    ga_costs = []
+    ga_times = []
+    for s in range(seeds):
+        np.random.seed(s)
+        g_res = run_ga_baseline(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, pop_size=15, max_iter=20)
+        ga_costs.append(g_res['fitness'])
+        ga_times.append(g_res['metrics']['total_travel_time'])
+    results['Genetic Algorithm'] = {
+        'cost_mean': float(np.mean(ga_costs)),
+        'cost_std': float(np.std(ga_costs)),
+        'cost_min': float(np.min(ga_costs)),
+        'cost_max': float(np.max(ga_costs)),
+        'time_mean': float(np.mean(ga_times))
+    }
     
-    # 4. QPSO
-    eval_stochastic(qpso_optimize, 'QPSO (Q-ROUTE)', num_particles=10, max_iter=20)
+    # 4. QPSO over seeds
+    qpso_costs = []
+    qpso_times = []
+    for s in range(seeds):
+        np.random.seed(s)
+        q_res = qpso_optimize(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, num_particles=15, max_iter=20)
+        qpso_costs.append(q_res['fitness'])
+        qpso_times.append(q_res['metrics']['total_travel_time'])
+    results['QPSO (Q-ROUTE)'] = {
+        'cost_mean': float(np.mean(qpso_costs)),
+        'cost_std': float(np.std(qpso_costs)),
+        'cost_min': float(np.min(qpso_costs)),
+        'cost_max': float(np.max(qpso_costs)),
+        'time_mean': float(np.mean(qpso_times))
+    }
     
     return results
 
-@app.get("/explain/{od_id}")
-def explain_od_pair(od_id: str, location: str):
+@router.get("/explain/{od_id}")
+def explain_od_pair(od_id: str, location: str = 'koramangala'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
-    if "_" not in od_id:
-        return HTTPException(status_code=400, detail="Invalid OD pair ID. Use origin_dest.")
-        
-    o, d = od_id.split('_')
-    o, d = int(o), int(d)
-    
+    # Find candidate route matching the OD pair
     flow_index = -1
-    route = None
-    for i, r in enumerate(state['candidate_routes']):
-        if r['origin'] == o and r['destination'] == d:
-            route = r
-            flow_index = i
+    for idx, r in enumerate(state['candidate_routes']):
+        if r['od_id'] == od_id or f"{r['origin']}_{r['destination']}" == od_id:
+            flow_index = idx
             break
             
-    if not route or len(route['paths']) < 2:
-        return {"status": "error", "message": "No alternative routes available for this OD pair. Q-ROUTE must use the single available physical path (no structural alternative)."}
+    if flow_index == -1:
+        return {"status": "error", "message": f"OD pair {od_id} not found."}
         
-    path0 = route['paths'][0] # Dijkstra Baseline
-    path1 = route['paths'][1] # QPSO Alternate
+    route = state['candidate_routes'][flow_index]
+    if len(route['paths']) < 2:
+        return {"status": "error", "message": "Only one path available for this OD pair; no alternate to explain."}
+        
+    path0 = route['paths'][0]
+    path1 = route['paths'][1]
     
-    edge_indices = {edge: idx for idx, edge in enumerate(state['edge_data']['edges'])}
-    
-    p0_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in zip(path0[:-1], path0[1:])])
-    p1_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in zip(path1[:-1], path1[1:])])
-    
-    # Let's find the specific worst bottleneck on Path 0 (Baseline)
-    # To do this right without running full assignment, we simulate a heavy load on both paths
+    # Calculate free-flow travel time for path0 and path1
     p0_edges = list(zip(path0[:-1], path0[1:]))
-    worst_edge = None
+    p1_edges = list(zip(path1[:-1], path1[1:]))
+    
+    edge_indices = {e: i for i, e in enumerate(state['edge_data']['edges'])}
+    
+    p0_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p0_edges])
+    p1_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p1_edges])
+    
     worst_cap = float('inf')
+    worst_edge = None
     
     for u, v in p0_edges:
         idx = edge_indices.get((u, v, 0))
@@ -342,3 +352,10 @@ def explain_od_pair(od_id: str, location: str):
         "qpso_free_flow": p1_time,
         "explanation": explanation_text
     }
+
+# Mount router both at root and with /api prefix so all deployment routing works
+app.include_router(router)
+app.include_router(router, prefix="/api")
+
+# Preload data on module load
+load_data()

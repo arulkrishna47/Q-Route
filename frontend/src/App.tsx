@@ -6,7 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceDot } from 'recharts';
 import { Activity, Map as MapIcon, Sliders, Database, Info, GitMerge, FileText, Settings, HelpCircle, AlertTriangle, Send, Zap, Layout } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://localhost:8000');
 
 const OPERATING_MODES = [
   { id: 'standard', name: 'Standard', desc: 'Balanced operation — the default for normal conditions.', weights: { time: 1.0, congestion: 1.0, co2: 1.0, penalty: 10.0 } },
