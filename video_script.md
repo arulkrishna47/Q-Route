@@ -52,7 +52,7 @@
 * **1:05:** Point mouse to the **Objective Convergence Plot** (Recharts curve) showing fitness cost dropping from 1570 down to 842.
 * **1:15:** Switch back to the **Operator** view.
 * **1:22:** Click the blue button **"Why This Matters (Theory & Real-World Impact)"** to pop up the educational modal.
-* **1:30:** Scroll gently down the modal: show the **Google Research Citation** (5-15% diversion rule) and the **Compliance Gradient Hierarchy** table (Signal Retiming $\to$ Fleet Dispatch $\to$ GPS Feeds).
+* **1:30:** Scroll gently down the modal: show the **Nature Cities / Google Research Citation** (<2% trip coordination field experiment) and the **Compliance Gradient Hierarchy** table (Signal Retiming $\to$ Fleet Dispatch $\to$ GPS Feeds).
 * **1:42:** Click the **Close** button on the modal.
 
 ### Voiceover / Spoken Script:

@@ -31,6 +31,20 @@ def evaluate_fitness(x_discrete, candidate_routes, edge_indices, capacities, fre
     total_cost, metrics = objective_func(edge_volumes, capacities, free_flow_times, lengths, weights)
     return total_cost, metrics, edge_volumes
 
+def build_edge_indices(edges):
+    """Build edge indices dictionary supporting both int and str tuple keys."""
+    edge_indices = {}
+    for idx, edge in enumerate(edges):
+        u, v = edge[0], edge[1]
+        k = edge[2] if len(edge) > 2 else 0
+        edge_indices[(u, v, k)] = idx
+        edge_indices[(str(u), str(v), k)] = idx
+        try:
+            edge_indices[(int(u), int(v), k)] = idx
+        except (ValueError, TypeError):
+            pass
+    return edge_indices
+
 def qpso_optimize(candidate_routes, edge_data, weights, objective_func,
                   num_particles=20, max_iter=50, beta_start=0.9, beta_end=0.4):
     """
@@ -40,7 +54,7 @@ def qpso_optimize(candidate_routes, edge_data, weights, objective_func,
     start_time = time.time()
     
     # Network arrays for fast evaluation
-    edge_indices = {edge: idx for idx, edge in enumerate(edge_data['edges'])}
+    edge_indices = build_edge_indices(edge_data['edges'])
     capacities = np.array(edge_data['capacities'])
     free_flow_times = np.array(edge_data['free_flow_times'])
     lengths = np.array(edge_data['lengths'])
@@ -57,6 +71,9 @@ def qpso_optimize(candidate_routes, edge_data, weights, objective_func,
         max_routes[i] = max_idx
         # Uniform random start
         x[:, i] = np.random.uniform(0, max_idx, size=num_particles)
+        
+    # Seed particle 0 with baseline (shortest path for all flows)
+    x[0, :] = 0.0
         
     # pbest: personal best position and fitness
     pbest_x = np.copy(x)

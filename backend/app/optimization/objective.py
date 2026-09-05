@@ -44,11 +44,13 @@ def evaluate_assignment(edge_volumes, capacities, free_flow_times, lengths, weig
     total_co2 = np.sum(co2)
     total_penalty = np.sum(violations**2) # Quadratic penalty
     
-    # Normalization factors
-    norm_tt = total_travel_time / 1000.0  # Scale down to readable numbers
-    norm_congestion = avg_vc * 10.0
-    norm_co2 = total_co2 / 1000.0
-    norm_penalty = total_penalty / 10.0
+    # Balanced Normalization Factors:
+    # Calibrated so each metric contributes on a balanced O(100) scale under standard flow,
+    # preventing CO2 (distance in meters) from overwhelming travel time (seconds).
+    norm_tt = total_travel_time / 1000.0          # Scaling ~75k veh-sec down to ~75
+    norm_co2 = total_co2 / 10000.0               # Scaling ~950k veh-meters down to ~95 (balanced 1:1 with travel time)
+    norm_congestion = max_vc * 100.0             # Peak bottleneck ratio ~93 (active congestion pressure)
+    norm_penalty = total_penalty / 100.0         # Quadratic violation penalty scaling
     
     total_cost = (weights.get('time', 1.0) * norm_tt +
                   weights.get('congestion', 1.0) * norm_congestion +

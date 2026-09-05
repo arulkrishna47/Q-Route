@@ -2,6 +2,20 @@ import numpy as np
 import time
 import copy
 
+def build_edge_indices(edges):
+    """Build edge indices dictionary supporting both int and str tuple keys."""
+    edge_indices = {}
+    for idx, edge in enumerate(edges):
+        u, v = edge[0], edge[1]
+        k = edge[2] if len(edge) > 2 else 0
+        edge_indices[(u, v, k)] = idx
+        edge_indices[(str(u), str(v), k)] = idx
+        try:
+            edge_indices[(int(u), int(v), k)] = idx
+        except (ValueError, TypeError):
+            pass
+    return edge_indices
+
 def run_dijkstra_baseline(G, candidate_routes, edge_data, weights, objective_func):
     """
     Baseline: assign all demand to the absolute shortest path (index 0).
@@ -9,7 +23,7 @@ def run_dijkstra_baseline(G, candidate_routes, edge_data, weights, objective_fun
     start_time = time.time()
     num_edges = len(edge_data['capacities'])
     edge_volumes = np.zeros(num_edges)
-    edge_indices = {edge: idx for idx, edge in enumerate(edge_data['edges'])}
+    edge_indices = build_edge_indices(edge_data['edges'])
     
     assignment = []
     
@@ -48,7 +62,7 @@ def run_traffic_aware_dijkstra(candidate_routes, edge_data, weights, objective_f
     start_time = time.time()
     num_edges = len(edge_data['capacities'])
     edge_volumes = np.zeros(num_edges)
-    edge_indices = {edge: idx for idx, edge in enumerate(edge_data['edges'])}
+    edge_indices = build_edge_indices(edge_data['edges'])
     capacities = np.array(edge_data['capacities'])
     free_flow_times = np.array(edge_data['free_flow_times'])
     lengths = np.array(edge_data['lengths'])
@@ -105,7 +119,7 @@ def run_traffic_aware_dijkstra(candidate_routes, edge_data, weights, objective_f
 def run_ga_baseline(candidate_routes, edge_data, weights, objective_func, pop_size=20, max_iter=30):
     start_time = time.time()
     num_edges = len(edge_data['capacities'])
-    edge_indices = {edge: idx for idx, edge in enumerate(edge_data['edges'])}
+    edge_indices = build_edge_indices(edge_data['edges'])
     capacities = np.array(edge_data['capacities'])
     free_flow_times = np.array(edge_data['free_flow_times'])
     lengths = np.array(edge_data['lengths'])
@@ -117,6 +131,8 @@ def run_ga_baseline(candidate_routes, edge_data, weights, objective_func, pop_si
     population = np.zeros((pop_size, num_flows), dtype=int)
     for i in range(num_flows):
         population[:, i] = np.random.randint(0, max_routes[i] + 1, size=pop_size)
+    # Seed first individual with baseline (shortest path for all flows)
+    population[0, :] = 0
         
     def eval_individual(ind):
         vols = np.zeros(num_edges)

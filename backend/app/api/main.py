@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from app.optimization.objective import evaluate_assignment
 from app.optimization.routing import generate_candidate_routes
 from app.optimization.qpso import qpso_optimize
-from app.optimization.baselines import run_dijkstra_baseline, run_ga_baseline, run_traffic_aware_dijkstra
+from app.optimization.baselines import run_dijkstra_baseline, run_ga_baseline, run_traffic_aware_dijkstra, build_edge_indices
 
 app = FastAPI(title="Q-ROUTE API")
 router = APIRouter()
@@ -63,8 +63,15 @@ def load_data():
                     meta = json.load(f)
                     
                 edges = list(G.edges(keys=True, data=True))
+                parsed_edges = []
+                for u, v, k, d in edges:
+                    try:
+                        parsed_edges.append((int(u), int(v), k))
+                    except (ValueError, TypeError):
+                        parsed_edges.append((str(u), str(v), k))
+                        
                 edge_data = {
-                    'edges': [(u, v, k) for u, v, k, d in edges],
+                    'edges': parsed_edges,
                     'capacities': [float(d.get('capacity', 800)) for u, v, k, d in edges],
                     'free_flow_times': [float(d.get('free_flow_time', 100)) for u, v, k, d in edges],
                     'lengths': [float(d.get('length', 100)) for u, v, k, d in edges],
@@ -238,7 +245,9 @@ def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds:
     results['Dijkstra'] = {
         'cost_mean': d_res['fitness'], 'cost_std': 0.0,
         'cost_min': d_res['fitness'], 'cost_max': d_res['fitness'],
-        'time_mean': d_res['metrics']['total_travel_time']
+        'time_mean': d_res['metrics']['total_travel_time'],
+        'max_vc_mean': float(d_res['metrics']['max_vc']),
+        'bottlenecks_mean': float(d_res['metrics']['capacity_violations_count'])
     }
     
     # 2. TA-Dijkstra (Deterministic)
@@ -246,39 +255,53 @@ def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds:
     results['TA-Dijkstra'] = {
         'cost_mean': t_res['fitness'], 'cost_std': 0.0,
         'cost_min': t_res['fitness'], 'cost_max': t_res['fitness'],
-        'time_mean': t_res['metrics']['total_travel_time']
+        'time_mean': t_res['metrics']['total_travel_time'],
+        'max_vc_mean': float(t_res['metrics']['max_vc']),
+        'bottlenecks_mean': float(t_res['metrics']['capacity_violations_count'])
     }
     
     # 3. GA over seeds
     ga_costs = []
     ga_times = []
+    ga_vcs = []
+    ga_bottlenecks = []
     for s in range(seeds):
         np.random.seed(s)
         g_res = run_ga_baseline(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, pop_size=15, max_iter=20)
         ga_costs.append(g_res['fitness'])
         ga_times.append(g_res['metrics']['total_travel_time'])
+        ga_vcs.append(g_res['metrics']['max_vc'])
+        ga_bottlenecks.append(g_res['metrics']['capacity_violations_count'])
     results['Genetic Algorithm'] = {
         'cost_mean': float(np.mean(ga_costs)),
         'cost_std': float(np.std(ga_costs)),
         'cost_min': float(np.min(ga_costs)),
         'cost_max': float(np.max(ga_costs)),
-        'time_mean': float(np.mean(ga_times))
+        'time_mean': float(np.mean(ga_times)),
+        'max_vc_mean': float(np.mean(ga_vcs)),
+        'bottlenecks_mean': float(np.mean(ga_bottlenecks))
     }
     
     # 4. QPSO over seeds
     qpso_costs = []
     qpso_times = []
+    qpso_vcs = []
+    qpso_bottlenecks = []
     for s in range(seeds):
         np.random.seed(s)
         q_res = qpso_optimize(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, num_particles=15, max_iter=20)
         qpso_costs.append(q_res['fitness'])
         qpso_times.append(q_res['metrics']['total_travel_time'])
+        qpso_vcs.append(q_res['metrics']['max_vc'])
+        qpso_bottlenecks.append(q_res['metrics']['capacity_violations_count'])
     results['QPSO (Q-ROUTE)'] = {
         'cost_mean': float(np.mean(qpso_costs)),
         'cost_std': float(np.std(qpso_costs)),
         'cost_min': float(np.min(qpso_costs)),
         'cost_max': float(np.max(qpso_costs)),
-        'time_mean': float(np.mean(qpso_times))
+        'time_mean': float(np.mean(qpso_times)),
+        'max_vc_mean': float(np.mean(qpso_vcs)),
+        'bottlenecks_mean': float(np.mean(qpso_bottlenecks))
     }
     
     return results
@@ -309,7 +332,7 @@ def explain_od_pair(od_id: str, location: str = 'koramangala'):
     p0_edges = list(zip(path0[:-1], path0[1:]))
     p1_edges = list(zip(path1[:-1], path1[1:]))
     
-    edge_indices = {e: i for i, e in enumerate(state['edge_data']['edges'])}
+    edge_indices = build_edge_indices(state['edge_data']['edges'])
     
     p0_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p0_edges])
     p1_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p1_edges])
