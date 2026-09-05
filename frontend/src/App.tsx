@@ -720,14 +720,32 @@ function App() {
                 let opacity: number;
 
                 if (showChangesOnly) {
-                  if (hasChanged) {
-                    color = '#d946ef'; // Vivid magenta/purple
-                    weight = 5.5;
+                  if (isClosed) {
+                    color = '#ff2222';
+                    weight = 7;
                     opacity = 1.0;
+                  } else if (!isQpso) {
+                    // LEFT MAP: Highlight roads where baseline had excess traffic (relieved by Q-ROUTE)
+                    if (diff < -1) {
+                      color = '#ef4444'; // Bright chokepoint red
+                      weight = Math.max(5.5, Math.min(9.5, 4.5 + Math.abs(diff) / 30));
+                      opacity = 1.0;
+                    } else {
+                      color = '#334155'; // Dimmed inactive
+                      weight = 1.2;
+                      opacity = 0.18;
+                    }
                   } else {
-                    color = '#334155'; // Subdued dark gray
-                    weight = 1.2;
-                    opacity = 0.2;
+                    // RIGHT MAP: Highlight roads where Q-ROUTE routed vehicles onto bypass corridors
+                    if (diff > 1) {
+                      color = '#06b6d4'; // Luminous bypass cyan
+                      weight = Math.max(5.5, Math.min(9.5, 4.5 + diff / 30));
+                      opacity = 1.0;
+                    } else {
+                      color = '#334155'; // Dimmed inactive
+                      weight = 1.2;
+                      opacity = 0.18;
+                    }
                   }
                 } else {
                   if (isClosed) {
@@ -779,19 +797,34 @@ function App() {
                             <strong>{edge.name || 'Unnamed Road'}</strong><br/>
                             {isClosed ? 'CLOSED (WHAT-IF SCENARIO) — Capacity = 0' : (
                               showChangesOnly ? (
-                                hasChanged ? (
-                                  <>
-                                    <span style={{color: '#d946ef', fontWeight: 'bold'}}>Traffic Shifted:</span><br/>
-                                    Baseline: {Math.round(bVol)} veh/hr<br/>
-                                    Optimized: {Math.round(qVol)} veh/hr<br/>
-                                    Delta: {diff > 0 ? `+${Math.round(diff)}` : Math.round(diff)} veh/hr<br/>
-                                    V/C: {(vol / edgeCap).toFixed(2)}
-                                  </>
+                                !isQpso ? (
+                                  diff < -1 ? (
+                                    <>
+                                      <span style={{color: '#ef4444', fontWeight: 'bold'}}>🚨 Overloaded Baseline Chokepoint:</span><br/>
+                                      Baseline Flow: {Math.round(bVol)} veh/hr<br/>
+                                      Relieved by Q-ROUTE: -{Math.round(Math.abs(diff))} veh/hr<br/>
+                                      V/C Ratio: {(bVol / edgeCap).toFixed(2)}
+                                    </>
+                                  ) : (
+                                    <>
+                                      Unchanged or secondary road in baseline.<br/>
+                                      Vol: {Math.round(vol)} | Cap: {edgeCap}
+                                    </>
+                                  )
                                 ) : (
-                                  <>
-                                    No volume change between plans.<br/>
-                                    Vol: {Math.round(vol)} | Cap: {edgeCap}
-                                  </>
+                                  diff > 1 ? (
+                                    <>
+                                      <span style={{color: '#06b6d4', fontWeight: 'bold'}}>✨ Q-ROUTE Parallel Bypass Corridor:</span><br/>
+                                      Traffic Absorbed: +{Math.round(diff)} veh/hr<br/>
+                                      Total Flow: {Math.round(qVol)} veh/hr<br/>
+                                      Safe V/C Ratio: {(qVol / edgeCap).toFixed(2)}
+                                    </>
+                                  ) : (
+                                    <>
+                                      Unchanged or relieved road in optimized plan.<br/>
+                                      Vol: {Math.round(vol)} | Cap: {edgeCap}
+                                    </>
+                                  )
                                 )
                               ) : (
                                 <>
@@ -832,18 +865,31 @@ function App() {
             </MapContainer>
             
             {/* Map Legend */}
-            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.92)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '250px'}}>
+            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.92)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '270px'}}>
               {showChangesOnly ? (
-                <>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
-                    <div style={{width: '14px', height: '4px', backgroundColor: '#d946ef', borderRadius: '2px'}}></div>
-                    <span style={{color: '#fdf4ff', fontWeight: 600}}>Rerouted Corridors (|Δ| &gt; 0)</span>
-                  </div>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                    <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
-                    <span style={{color: 'var(--text-secondary)'}}>Unchanged routes</span>
-                  </div>
-                </>
+                !isQpso ? (
+                  <>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                      <div style={{width: '14px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
+                      <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded Chokepoints (Relieved)</span>
+                    </div>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                      <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-overloaded roads</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                      <div style={{width: '14px', height: '4px', backgroundColor: '#06b6d4', borderRadius: '2px'}}></div>
+                      <span style={{color: '#a5f3fc', fontWeight: 600}}>Parallel Bypass Corridors (+Flow)</span>
+                    </div>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                      <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-diverted roads</span>
+                    </div>
+                  </>
+                )
               ) : (
                 <>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
