@@ -130,10 +130,12 @@ def health_check():
 
 @router.get("/locations")
 def get_locations():
-    return [{"id": k, "name": v['metadata'].get('query', k)} for k, v in locations_state.items()]
+    preferred = ['mylapore', 'koramangala']
+    sorted_keys = sorted(locations_state.keys(), key=lambda k: preferred.index(k) if k in preferred else 99)
+    return [{"id": k, "name": locations_state[k]['metadata'].get('query', k)} for k in sorted_keys]
 
 @router.get("/network")
-def get_network(location: str = 'koramangala'):
+def get_network(location: str = 'mylapore'):
     if location not in locations_state:
         raise HTTPException(status_code=404, detail="Location not found")
         
@@ -175,7 +177,7 @@ def apply_what_if(local_edge_data, modified_capacities):
     return new_edge_data
 
 @router.post("/optimize/baseline")
-def run_baseline(weights: WeightsParams, location: str = 'koramangala'):
+def run_baseline(weights: WeightsParams, location: str = 'mylapore'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -188,7 +190,7 @@ def run_baseline(weights: WeightsParams, location: str = 'koramangala'):
     return res
 
 @router.post("/optimize/qpso")
-def run_qpso(weights: WeightsParams, location: str = 'koramangala', particles: int = 20, iterations: int = 50):
+def run_qpso(weights: WeightsParams, location: str = 'mylapore', particles: int = 20, iterations: int = 50):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -202,7 +204,7 @@ def run_qpso(weights: WeightsParams, location: str = 'koramangala', particles: i
     return res
 
 @router.post("/optimize/ga")
-def run_ga(weights: WeightsParams, location: str = 'koramangala', pop_size: int = 20, iterations: int = 50):
+def run_ga(weights: WeightsParams, location: str = 'mylapore', pop_size: int = 20, iterations: int = 50):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -216,7 +218,7 @@ def run_ga(weights: WeightsParams, location: str = 'koramangala', pop_size: int 
     return res
 
 @router.get("/experiments")
-def get_experiments(location: str = 'koramangala'):
+def get_experiments(location: str = 'mylapore'):
     if not location: return []
     exp_file = os.path.join(DATA_DIR, location, 'experiments.json')
     if os.path.exists(exp_file):
@@ -225,7 +227,7 @@ def get_experiments(location: str = 'koramangala'):
     return []
 
 @router.post("/benchmark")
-def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds: int = 10, multiplier: float = 1.0):
+def run_benchmarks(weights: WeightsParams, location: str = 'mylapore', seeds: int = 10, multiplier: float = 1.0):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
@@ -307,14 +309,14 @@ def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds:
     return results
 
 @router.get("/od_pairs")
-def get_od_pairs(location: str = 'koramangala'):
+def get_od_pairs(location: str = 'mylapore'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     pairs = []
     for idx, r in enumerate(state['candidate_routes']):
         pair_id = f"{r['origin']}_{r['destination']}"
         pairs.append({
-            "id": pair_id,
+            "id": r.get('od_id') or pair_id,
             "index": idx,
             "origin": r['origin'],
             "destination": r['destination'],
@@ -324,7 +326,7 @@ def get_od_pairs(location: str = 'koramangala'):
     return pairs
 
 @router.get("/explain/{od_id}")
-def explain_od_pair(od_id: str, location: str = 'koramangala'):
+def explain_od_pair(od_id: str, location: str = 'mylapore'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     

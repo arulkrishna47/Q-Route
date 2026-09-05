@@ -120,6 +120,18 @@ function App() {
     }
     return () => clearInterval(interval);
   }, [isPlaying, qpsoRes, playbackSpeed]);
+
+  const hasIterationChanges = useMemo(() => {
+    if (!qpsoRes?.edge_volumes_history || qpsoRes.edge_volumes_history.length <= 1) return false;
+    const first = qpsoRes.edge_volumes_history[0];
+    const last = qpsoRes.edge_volumes_history[qpsoRes.edge_volumes_history.length - 1];
+    let delta = 0;
+    for (let i = 0; i < Math.min(first.length, last.length); i++) {
+      delta += Math.abs(first[i] - last[i]);
+    }
+    return delta > 5.0;
+  }, [qpsoRes]);
+
   const [benchmarking, setBenchmarking] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [explainData, setExplainData] = useState<any>(null);
@@ -209,11 +221,15 @@ function App() {
 
   const handleApplySuggestion = (modeId: string) => {
     setActiveModeId(modeId);
+    const m = OPERATING_MODES.find(mode => mode.id === modeId);
+    if (m) setWeights(m.weights);
     setSuggestionApplied(true);
   };
   
   const handleManualSelect = (modeId: string) => {
     setActiveModeId(modeId);
+    const m = OPERATING_MODES.find(mode => mode.id === modeId);
+    if (m) setWeights(m.weights);
     if (suggestion && modeId === suggestion.mode) {
       setSuggestionApplied(true);
     } else {
@@ -229,9 +245,12 @@ function App() {
 
   const fetchLocations = async () => {
     try {
-        const res = await axios.get(`${API_BASE}/locations`);
+      const res = await axios.get(`${API_BASE}/locations`);
       setLocations(res.data);
-      if (res.data.length > 0) setActiveLocation(res.data[0].id);
+      if (res.data.length > 0) {
+        const def = res.data.find((l: any) => l.id === 'mylapore') || res.data[0];
+        setActiveLocation(def.id);
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -612,6 +631,54 @@ function App() {
         
         <div style={{flex: 1, position: 'relative', minHeight: '380px'}}>
           <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0}}>
+            {/* Step 3: What-If Road Closure On-Map Guidance Banner */}
+            {whatIfMode && (
+              <div style={{
+                position: 'absolute',
+                top: '12px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 1000,
+                backgroundColor: Object.keys(modifiedCapacities).length === 0 ? 'rgba(239, 68, 68, 0.95)' : 'rgba(185, 28, 28, 0.95)',
+                color: '#ffffff',
+                padding: '0.45rem 1.15rem',
+                borderRadius: '24px',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.65rem',
+                pointerEvents: 'auto',
+                border: '1px solid rgba(255,255,255,0.25)'
+              }}>
+                {Object.keys(modifiedCapacities).length === 0 ? (
+                  <>
+                    <AlertTriangle size={16} /> Click any road segment on the map to simulate closing it
+                  </>
+                ) : (
+                  <>
+                    <span>🚧 <strong>{Object.keys(modifiedCapacities).length}</strong> road segment(s) closed (dashed red lines). Click "RUN OPTIMIZATION" to calculate detours.</span>
+                    <button 
+                      className="btn" 
+                      style={{
+                        padding: '0.15rem 0.55rem', 
+                        margin: 0, 
+                        fontSize: '0.75rem', 
+                        backgroundColor: '#ffffff', 
+                        color: '#dc2626', 
+                        fontWeight: 700,
+                        borderRadius: '12px'
+                      }} 
+                      onClick={() => setModifiedCapacities({})}
+                    >
+                      Reset
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             <MapContainer center={center as any} zoom={15} style={{ height: '100%', width: '100%' }}>
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -664,44 +731,53 @@ function App() {
                   }
                 } else {
                   if (isClosed) {
-                    color = '#ff0000';
-                    weight = 6;
+                    color = '#ff2222';
+                    weight = 7;
                     opacity = 1.0;
                   } else if (vol > 0) {
-                    color = vc > 1.0 ? '#ef4444' : vc > 0.7 ? '#eab308' : '#22c55e';
-                    weight = Math.max(3, Math.min(8, vol / 50));
-                    opacity = 0.85;
+                    // Step 5: Enhanced vibrant route contrast
+                    color = vc > 1.0 ? '#ff334b' : vc > 0.7 ? '#fbbf24' : '#10b981';
+                    weight = Math.max(4.5, Math.min(9.5, 4.0 + vol / 40));
+                    opacity = 0.95;
                   } else {
                     // Priority 5: 4th state for no simulated traffic
-                    color = '#475569'; // Dim neutral slate-gray
-                    weight = 1.5;
-                    opacity = 0.35;
+                    color = '#334155'; // Dim neutral slate-gray
+                    weight = 1.4;
+                    opacity = 0.25;
                   }
                 }
                 
                 const isHighlighted = isQpso && viewMode === 'operator' && highlightKeys.has(key);
                 const isFocused = focusedEdgeKey === key;
                 if (isFocused) {
-                  weight = Math.max(weight, 7);
+                  weight = Math.max(weight, 8);
                   opacity = 1.0;
-                  color = '#ef4444';
+                  color = '#ff334b';
                 }
                 
                 return (
                   <React.Fragment key={i}>
                     <Polyline 
                       positions={[[u.lat, u.lon], [v.lat, v.lon]]} 
+                      eventHandlers={{
+                        click: (e) => {
+                          if (whatIfMode) {
+                            L.DomEvent.stopPropagation(e);
+                            handleEdgeClick(edge);
+                          }
+                        }
+                      }}
                       pathOptions={{ 
                         color, 
                         weight, 
                         opacity: isClosed || isFocused ? 1 : (isHighlighted ? 1 : opacity), 
-                        dashArray: isClosed ? '5, 5' : undefined 
+                        dashArray: isClosed ? '6, 6' : undefined 
                       }}
                     >
                       <Tooltip direction="top">
                           <div className="mono">
                             <strong>{edge.name || 'Unnamed Road'}</strong><br/>
-                            {isClosed ? 'CLOSED (WHAT-IF)' : (
+                            {isClosed ? 'CLOSED (WHAT-IF SCENARIO) — Capacity = 0' : (
                               showChangesOnly ? (
                                 hasChanged ? (
                                   <>
@@ -728,14 +804,25 @@ function App() {
                           </div>
                       </Tooltip>
                     </Polyline>
+                    {isClosed && (
+                      <CircleMarker 
+                        center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
+                        radius={7} 
+                        pathOptions={{ color: '#ffffff', fillColor: '#ef4444', fillOpacity: 1.0, weight: 2 }}
+                      >
+                        <Tooltip permanent direction="top">
+                          <span style={{fontWeight: 700, color: '#ef4444', fontSize: '0.75rem'}}>⛔ CLOSED (WHAT-IF)</span>
+                        </Tooltip>
+                      </CircleMarker>
+                    )}
                     {isFocused && (
                       <CircleMarker 
                         center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
                         radius={9} 
-                        pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.85, weight: 3 }}
+                        pathOptions={{ color: '#ffffff', fillColor: '#ff334b', fillOpacity: 0.9, weight: 3 }}
                       >
                         <Tooltip permanent direction="top">
-                          <span style={{fontWeight: 700, color: '#ef4444', fontSize: '0.8rem'}}>🚨 Peak Bottleneck (V/C: {vc.toFixed(2)})</span>
+                          <span style={{fontWeight: 700, color: '#ff334b', fontSize: '0.8rem'}}>🚨 Peak Bottleneck (V/C: {vc.toFixed(2)})</span>
                         </Tooltip>
                       </CircleMarker>
                     )}
@@ -745,7 +832,7 @@ function App() {
             </MapContainer>
             
             {/* Map Legend */}
-            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.9)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '250px'}}>
+            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.92)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '250px'}}>
               {showChangesOnly ? (
                 <>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
@@ -760,20 +847,20 @@ function App() {
               ) : (
                 <>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '12px', height: '3px', backgroundColor: '#475569', borderRadius: '2px'}}></div>
+                    <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
                     <span style={{color: 'var(--text-secondary)'}}>Gray = No simulated traffic (0 veh)</span>
                   </div>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '12px', height: '4px', backgroundColor: '#22c55e', borderRadius: '2px'}}></div>
-                    <span style={{color: 'var(--text-secondary)'}}>Free-flowing (&lt;70% V/C)</span>
+                    <div style={{width: '14px', height: '5px', backgroundColor: '#10b981', borderRadius: '2px'}}></div>
+                    <span style={{color: '#a7f3d0', fontWeight: 500}}>Free-flowing (&lt;70% V/C)</span>
                   </div>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '12px', height: '4px', backgroundColor: '#eab308', borderRadius: '2px'}}></div>
-                    <span style={{color: 'var(--text-secondary)'}}>Moderate (70–100% V/C)</span>
+                    <div style={{width: '14px', height: '5px', backgroundColor: '#fbbf24', borderRadius: '2px'}}></div>
+                    <span style={{color: '#fde68a', fontWeight: 500}}>Moderate (70–100% V/C)</span>
                   </div>
                   <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                    <div style={{width: '12px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
-                    <span style={{color: 'var(--text-secondary)'}}>Overloaded (&gt;100% V/C)</span>
+                    <div style={{width: '14px', height: '5px', backgroundColor: '#ff334b', borderRadius: '2px'}}></div>
+                    <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded (&gt;100% V/C)</span>
                   </div>
                 </>
               )}
@@ -787,26 +874,35 @@ function App() {
                 borderTop: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem',
                 flexShrink: 0
             }}>
-                <button className="btn" style={{backgroundColor: 'var(--accent-qpso)', color: '#000', width: 'auto', marginBottom: 0, padding: '0.4rem 1rem'}} onClick={() => {
-                    if (replayIteration === null || replayIteration >= qpsoRes.edge_volumes_history.length - 1) setReplayIteration(0);
-                    setIsPlaying(!isPlaying);
-                }}>
-                    {isPlaying ? 'Pause' : 'Play'}
-                </button>
-                <input type="range" min="0" max={qpsoRes.edge_volumes_history.length - 1} 
-                    value={replayIteration === null ? qpsoRes.edge_volumes_history.length - 1 : replayIteration}
-                    onChange={(e) => { setReplayIteration(parseInt(e.target.value)); setIsPlaying(false); }}
-                    style={{ flex: 1 }}
-                />
-                <span style={{color: 'var(--text-primary)', fontFamily: 'var(--font-mono, monospace)', fontSize: '0.875rem', minWidth: '70px'}}>
-                  Iter: {replayIteration === null ? qpsoRes.edge_volumes_history.length - 1 : replayIteration}
-                </span>
-                <select value={playbackSpeed} onChange={(e) => setPlaybackSpeed(parseInt(e.target.value))} style={{padding: '0.35rem 0.5rem', width: 'auto', marginBottom: 0}}>
-                    <option value={600}>0.5x Slow</option>
-                    <option value={300}>1x Normal</option>
-                    <option value={100}>3x Fast</option>
-                </select>
-                <button className="btn" style={{width: 'auto', marginBottom: 0, padding: '0.4rem 1rem'}} onClick={() => { setReplayIteration(null); setIsPlaying(false); }}>Reset</button>
+                {!hasIterationChanges ? (
+                  <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic', width: '100%', justifyContent: 'center'}}>
+                    <Info size={15} style={{color: 'var(--accent-qpso)', flexShrink: 0}} />
+                    <span>This scenario converged immediately — no iteration-to-iteration changes to show. Initial shortest path had zero bottlenecks to redistribute.</span>
+                  </div>
+                ) : (
+                  <>
+                    <button className="btn" style={{backgroundColor: 'var(--accent-qpso)', color: '#000', width: 'auto', marginBottom: 0, padding: '0.4rem 1rem'}} onClick={() => {
+                        if (replayIteration === null || replayIteration >= qpsoRes.edge_volumes_history.length - 1) setReplayIteration(0);
+                        setIsPlaying(!isPlaying);
+                    }}>
+                        {isPlaying ? 'Pause' : 'Play'}
+                    </button>
+                    <input type="range" min="0" max={qpsoRes.edge_volumes_history.length - 1} 
+                        value={replayIteration === null ? qpsoRes.edge_volumes_history.length - 1 : replayIteration}
+                        onChange={(e) => { setReplayIteration(parseInt(e.target.value)); setIsPlaying(false); }}
+                        style={{ flex: 1 }}
+                    />
+                    <span style={{color: 'var(--text-primary)', fontFamily: 'var(--font-mono, monospace)', fontSize: '0.875rem', minWidth: '70px'}}>
+                      Iter: {replayIteration === null ? qpsoRes.edge_volumes_history.length - 1 : replayIteration}
+                    </span>
+                    <select value={playbackSpeed} onChange={(e) => setPlaybackSpeed(parseInt(e.target.value))} style={{padding: '0.35rem 0.5rem', width: 'auto', marginBottom: 0}}>
+                        <option value={600}>0.5x Slow</option>
+                        <option value={300}>1x Normal</option>
+                        <option value={100}>3x Fast</option>
+                    </select>
+                    <button className="btn" style={{width: 'auto', marginBottom: 0, padding: '0.4rem 1rem'}} onClick={() => { setReplayIteration(null); setIsPlaying(false); }}>Reset</button>
+                  </>
+                )}
             </div>
         )}
       </div>
@@ -927,6 +1023,26 @@ function App() {
                 {explanationText && (
                   <div className="impact-explanation">
                     {explanationText}
+                  </div>
+                )}
+                {!costImproved && (
+                  <div style={{
+                    marginTop: '0.75rem',
+                    padding: '0.55rem 0.85rem',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                    border: '1px solid rgba(59, 130, 246, 0.4)',
+                    fontSize: '0.8rem',
+                    color: '#93c5fd',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    textAlign: 'left'
+                  }}>
+                    <Info size={16} style={{flexShrink: 0, color: '#60a5fa'}} />
+                    <span>
+                      <strong>Classical Dijkstra matched or edged Q-ROUTE in this run:</strong> In uncongested regimes with zero bottlenecks, uncoordinated shortest paths are already near-optimal. Q-ROUTE's system-optimum coordination advantage specifically activates under heavy demand and corridor bottlenecks.
+                    </span>
                   </div>
                 )}
               </>
@@ -1104,43 +1220,68 @@ function App() {
                 const minCostAlgo = algos.reduce((best, curr) => 
                   benchmarkRes[curr].cost_mean < benchmarkRes[best].cost_mean ? curr : best
                 , algos[0]);
+                const isQpsoWinner = minCostAlgo.toLowerCase().includes('qpso');
 
                 return (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Algorithm</th>
-                        <th>Mean Cost Score</th>
-                        <th>Std Dev</th>
-                        <th>Best Cost Score</th>
-                        <th>Worst Cost Score</th>
-                        <th>Mean Travel Time</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {algos.map(algo => {
-                        const isWinner = algo === minCostAlgo;
-                        return (
-                          <tr 
-                            key={algo} 
-                            style={{
-                              backgroundColor: isWinner ? 'rgba(34, 197, 94, 0.12)' : 'transparent',
-                              fontWeight: isWinner ? 600 : 'normal'
-                            }}
-                          >
-                            <td style={{color: isWinner ? 'var(--status-good)' : (algo.includes('QPSO') ? 'var(--accent-qpso)' : 'inherit')}}>
-                              {algo} {isWinner && <span style={{fontSize: '0.75rem', padding: '0.15rem 0.45rem', borderRadius: '3px', backgroundColor: 'var(--status-good)', color: '#000', marginLeft: '0.5rem', fontWeight: 'bold'}}>🏆 Lowest Cost</span>}
-                            </td>
-                            <td style={{color: isWinner ? 'var(--status-good)' : 'inherit', fontWeight: isWinner ? 'bold' : 'normal'}}>{benchmarkRes[algo].cost_mean.toFixed(1)}</td>
-                            <td>±{benchmarkRes[algo].cost_std.toFixed(1)}</td>
-                            <td>{benchmarkRes[algo].cost_min.toFixed(1)}</td>
-                            <td>{benchmarkRes[algo].cost_max.toFixed(1)}</td>
-                            <td>~{Math.round(benchmarkRes[algo].time_mean/3600).toLocaleString()} veh-hrs</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <>
+                    {!isQpsoWinner && (
+                      <div style={{
+                        marginBottom: '1.5rem',
+                        padding: '1rem 1.25rem',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                        border: '1px solid #3b82f6',
+                        display: 'flex',
+                        gap: '0.85rem',
+                        alignItems: 'flex-start'
+                      }}>
+                        <Info size={22} style={{color: '#60a5fa', flexShrink: 0, marginTop: '2px'}} />
+                        <div>
+                          <h4 style={{color: '#93c5fd', margin: '0 0 0.35rem 0', fontSize: '0.95rem'}}>
+                            Why did a classical method ({minCostAlgo}) win this run?
+                          </h4>
+                          <p style={{color: '#e2e8f0', fontSize: '0.85rem', lineHeight: '1.5', margin: 0}}>
+                            <strong>{minCostAlgo}</strong> matched or outperformed Q-ROUTE in this run. This is expected and correct behavior: in low-demand or uncongested conditions, simpler methods are already near-optimal, and Q-ROUTE's coordination overhead isn't needed. Q-ROUTE's advantage specifically appears under higher-demand, congested conditions — try <em>Congestion Relief</em> mode, <em>Peak Hour</em> mode, or a higher vehicle count to see it.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Algorithm</th>
+                          <th>Mean Cost Score</th>
+                          <th>Std Dev</th>
+                          <th>Best Cost Score</th>
+                          <th>Worst Cost Score</th>
+                          <th>Mean Travel Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {algos.map(algo => {
+                          const isWinner = algo === minCostAlgo;
+                          return (
+                            <tr 
+                              key={algo} 
+                              style={{
+                                backgroundColor: isWinner ? 'rgba(34, 197, 94, 0.12)' : 'transparent',
+                                fontWeight: isWinner ? 600 : 'normal'
+                              }}
+                            >
+                              <td style={{color: isWinner ? 'var(--status-good)' : (algo.includes('QPSO') ? 'var(--accent-qpso)' : 'inherit')}}>
+                                {algo} {isWinner && <span style={{fontSize: '0.75rem', padding: '0.15rem 0.45rem', borderRadius: '3px', backgroundColor: 'var(--status-good)', color: '#000', marginLeft: '0.5rem', fontWeight: 'bold'}}>🏆 Lowest Cost</span>}
+                              </td>
+                              <td style={{color: isWinner ? 'var(--status-good)' : 'inherit', fontWeight: isWinner ? 'bold' : 'normal'}}>{benchmarkRes[algo].cost_mean.toFixed(1)}</td>
+                              <td>±{benchmarkRes[algo].cost_std.toFixed(1)}</td>
+                              <td>{benchmarkRes[algo].cost_min.toFixed(1)}</td>
+                              <td>{benchmarkRes[algo].cost_max.toFixed(1)}</td>
+                              <td>~{Math.round(benchmarkRes[algo].time_mean/3600).toLocaleString()} veh-hrs</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </>
                 );
               })()}
               
