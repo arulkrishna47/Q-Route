@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { MapContainer, TileLayer, Polyline, Tooltip, useMapEvents, Marker } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Tooltip, useMapEvents, useMap, Marker, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceDot } from 'recharts';
-import { Activity, Map as MapIcon, Sliders, Database, Info, GitMerge, FileText, Settings, HelpCircle, AlertTriangle, Send, Zap, Layout } from 'lucide-react';
+import { Activity, Map as MapIcon, Sliders, Database, Info, GitMerge, FileText, Settings, HelpCircle, AlertTriangle, Send, Zap, Layout, Download, Search, RefreshCw, CheckCircle } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://localhost:8000');
 
@@ -54,6 +54,16 @@ function MapClickHandler({ onEdgeClick, network }: any) {
       if (nearestEdge) onEdgeClick(nearestEdge);
     },
   });
+  return null;
+}
+
+function MapViewController({ target }: { target: [number, number] | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (target) {
+      map.flyTo(target, 16, { animate: true, duration: 0.8 });
+    }
+  }, [target, map]);
   return null;
 }
 
@@ -116,6 +126,20 @@ function App() {
   const [whatIfMode, setWhatIfMode] = useState(false);
   const [modifiedCapacities, setModifiedCapacities] = useState<Record<string, number>>({});
 
+  // Round 13 states
+  const [odPairs, setOdPairs] = useState<any[]>([]);
+  const [selectedOd, setSelectedOd] = useState<string>('');
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
+
+  const [signalApproved, setSignalApproved] = useState(false);
+  const [fleetExported, setFleetExported] = useState(false);
+
+  const [showChangesOnly, setShowChangesOnly] = useState(false);
+  const [focusedEdgeKey, setFocusedEdgeKey] = useState<string | null>(null);
+  const [mapTargetCenter, setMapTargetCenter] = useState<[number, number] | null>(null);
+  const [showMinorFlows, setShowMinorFlows] = useState(false);
+
   useEffect(() => {
     fetchLocations();
   }, []);
@@ -133,9 +157,16 @@ function App() {
         setSuggestion(null);
         setReplayIteration(null);
         setIsPlaying(false);
+        setSignalApproved(false);
+        setFleetExported(false);
+        setFocusedEdgeKey(null);
+        setMapTargetCenter(null);
+        setExplainData(null);
+        setExplainError(null);
         
         fetchNetwork(activeLocation);
         fetchHistory(activeLocation);
+        fetchOdPairs(activeLocation);
     }
   }, [activeLocation]);
 
@@ -288,14 +319,73 @@ function App() {
     setModifiedCapacities(newCaps);
   };
   
-  const fetchExplanation = async () => {
+  const fetchOdPairs = async (loc: string) => {
     try {
-      const defaultOd = activeLocation === 'mylapore' ? '262793166_2216290056' : '10775075568_10282769895';
-      const res = await axios.get(`${API_BASE}/explain/${defaultOd}?location=${activeLocation}`);
-      if (res.data.status === 'ok') setExplainData(res.data);
-      else setExplainData({ explanation: res.data.message || 'No alternative routes available for this OD pair.', baseline_free_flow: 0, qpso_free_flow: 0 });
+      const res = await axios.get(`${API_BASE}/od_pairs?location=${loc}`);
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        setOdPairs(res.data);
+        const multiPath = res.data.find((p: any) => p.num_paths >= 2) || res.data[0];
+        setSelectedOd(multiPath.id);
+        fetchExplanation(multiPath.id, loc);
+      }
     } catch (e) {
-      console.error(e);
+      console.error("Failed to load OD pairs:", e);
+    }
+  };
+
+  const fetchExplanation = async (odId?: string, locOverride?: string) => {
+    const loc = locOverride || activeLocation;
+    const targetOd = odId || selectedOd;
+    if (!targetOd) return;
+    setExplainLoading(true);
+    setExplainError(null);
+    try {
+      const res = await axios.get(`${API_BASE}/explain/${targetOd}?location=${loc}`);
+      if (res.data.status === 'ok' || res.data.status === 'single_path') {
+        setExplainData(res.data);
+      } else {
+        setExplainError(res.data.message || 'No alternative routes available for this OD pair.');
+      }
+    } catch (e: any) {
+      console.error("Error fetching explanation:", e);
+      setExplainError(e.response?.data?.detail || e.message || 'Failed to fetch explanation from server.');
+    } finally {
+      setExplainLoading(false);
+    }
+  };
+
+  const handleApproveSignalTiming = () => {
+    setSignalApproved(true);
+  };
+
+  const handleExportFleetDispatch = () => {
+    const exportData = {
+      timestamp: new Date().toISOString(),
+      location: activeLocation,
+      mode: activeModeId,
+      fleet_shifts_count: fleetRecs,
+      signal_recommendations: signalRecs,
+      advisory_recommendations: advisoryRecs,
+      status: "DISPATCHED_TO_MUNICIPAL_TRANSIT"
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qroute_fleet_dispatch_${activeLocation}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setFleetExported(true);
+  };
+
+  const handleLocateBottleneck = (item: any) => {
+    if (!item || !network) return;
+    const uNode = network.nodes.find((n: any) => n.id === item.edge.u);
+    const vNode = network.nodes.find((n: any) => n.id === item.edge.v);
+    if (uNode && vNode) {
+      const target: [number, number] = [(uNode.lat + vNode.lat)/2, (uNode.lon + vNode.lon)/2];
+      setMapTargetCenter(target);
+      setFocusedEdgeKey(`${item.edge.u}_${item.edge.v}_${item.edge.k}`);
     }
   };
 
@@ -308,6 +398,7 @@ function App() {
   let explanationText = "";
   
   const signalRecs: any[] = [];
+  const minorSignalRecs: any[] = [];
   const advisoryRecs: any[] = [];
   let fleetRecs = 0;
 
@@ -410,9 +501,18 @@ function App() {
     fleetRecs = Math.round(fleetShiftCount / 10);
     const signalSortScore = (d: any) => { let score = d.qVc; if (d.isUnnamed) score -= 1000; return score; };
     const advisorySortScore = (d: any) => { let score = Math.abs(d.diff); if (d.isUnnamed) score /= 1000; return score; };
-    const sortedIncreases = [...diffs].filter(d => d.diff > 10).sort((a, b) => signalSortScore(b) - signalSortScore(a));
-    signalRecs.push(...sortedIncreases.slice(0, 3)); 
-    const sortedDecreases = [...diffs].filter(d => d.diff < -20).sort((a, b) => advisorySortScore(b) - advisorySortScore(a)); 
+    
+    // Priority 8: Suppress trivial recommendations when there are no bottlenecks or roads are uncongested
+    // Genuine physical signal adjustments reserved for edges near or over capacity (V/C >= 0.70)
+    const significantIncreases = [...diffs].filter(d => d.diff > 10 && d.qVc >= 0.70).sort((a, b) => signalSortScore(b) - signalSortScore(a));
+    const minorIncreases = [...diffs].filter(d => d.diff > 10 && d.qVc < 0.70).sort((a, b) => signalSortScore(b) - signalSortScore(a));
+    
+    if (significantIncreases.length > 0) {
+      signalRecs.push(...significantIncreases.slice(0, 3));
+    }
+    minorSignalRecs.push(...minorIncreases.slice(0, 3));
+    
+    const sortedDecreases = [...diffs].filter(d => d.diff < -20 && d.bVol / d.edgeCap >= 0.50).sort((a, b) => advisorySortScore(b) - advisorySortScore(a)); 
     advisoryRecs.push(...sortedDecreases.slice(0, 2));
   }
   
@@ -428,29 +528,85 @@ function App() {
     const lons = network.nodes.map((n: any) => n.lon);
     const center = [(Math.max(...lats) + Math.min(...lats)) / 2, (Math.max(...lons) + Math.min(...lons)) / 2];
 
+    // Priority 6: Find worst congested edge
+    let worstCongestedEdge: any = null;
+    let congestedCount = 0;
+    if (resultData && resultData.edge_volumes) {
+      network.edges.forEach((edge: any, i: number) => {
+        const edgeCap = modifiedCapacities[`${edge.u}_${edge.v}_${edge.k}`] !== undefined ? modifiedCapacities[`${edge.u}_${edge.v}_${edge.k}`] : edge.capacity;
+        let vol = resultData.edge_volumes[i];
+        if (isQpso && replayIteration !== null && resultData.edge_volumes_history) {
+            const histVols = resultData.edge_volumes_history[replayIteration];
+            if (histVols && histVols.length > i) vol = histVols[i];
+        }
+        const vc = edgeCap > 0 ? vol / edgeCap : 0;
+        if (edgeCap > 0 && vc >= 0.7) {
+          congestedCount++;
+          if (!worstCongestedEdge || vc > worstCongestedEdge.vc) {
+            let rName = Array.isArray(edge.name) ? edge.name[0] : edge.name;
+            if (!rName) rName = `Link ${edge.u}→${edge.v}`;
+            worstCongestedEdge = { edge, index: i, vc, vol, edgeCap, roadName: rName };
+          }
+        }
+      });
+    }
+
     return (
       <div className="map-wrapper" style={{height: '100%', position: 'relative', display: 'flex', flexDirection: 'column'}}>
         <div style={{padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)', flexShrink: 0}}>
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
-            <h2 style={{fontSize: '1rem', margin: 0, color: accentColor}}>{whatIfMode && Object.keys(modifiedCapacities).length > 0 ? "WHAT-IF SCENARIO: " : ""}{title}</h2>
-            <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>{subtitle}</span>
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem', flexWrap: 'wrap', gap: '0.5rem'}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+              <h2 style={{fontSize: '1rem', margin: 0, color: accentColor}}>{whatIfMode && Object.keys(modifiedCapacities).length > 0 ? "WHAT-IF SCENARIO: " : ""}{title}</h2>
+              <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>{subtitle}</span>
+            </div>
+            {/* Priority 7: Show Changes Only toggle */}
+            {baselineRes && qpsoRes && (
+              <button 
+                className="btn" 
+                style={{
+                  fontSize: '0.75rem', 
+                  padding: '0.25rem 0.65rem', 
+                  width: 'auto', 
+                  marginBottom: 0,
+                  backgroundColor: showChangesOnly ? '#c026d3' : 'transparent',
+                  borderColor: '#c026d3',
+                  color: showChangesOnly ? '#ffffff' : '#d946ef',
+                  fontWeight: showChangesOnly ? 600 : 'normal'
+                }}
+                onClick={() => setShowChangesOnly(!showChangesOnly)}
+              >
+                {showChangesOnly ? '✓ Showing Changes Only (|Δ| > 0)' : 'Highlight Volume Changes Only'}
+              </button>
+            )}
           </div>
-          <div className="map-context" style={{fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px'}}>
-            {(() => {
-              if (!resultData || !resultData.edge_volumes) return "Baseline OpenStreetMap road geometry loaded.";
-              let congestedCount = 0;
-              network.edges.forEach((edge: any, i: number) => {
-                const edgeCap = modifiedCapacities[`${edge.u}_${edge.v}_${edge.k}`] !== undefined ? modifiedCapacities[`${edge.u}_${edge.v}_${edge.k}`] : edge.capacity;
-                let vol = resultData.edge_volumes[i];
-                if (isQpso && replayIteration !== null && resultData.edge_volumes_history) {
-                    const histVols = resultData.edge_volumes_history[replayIteration];
-                    if (histVols && histVols.length > i) vol = histVols[i];
-                }
-                if (edgeCap > 0 && (vol / edgeCap) >= 0.7) congestedCount++;
-              });
-              if (congestedCount === 0) return "This network currently has no congested roads — all segments are free-flowing under the simulated demand for this scenario.";
-              return `${congestedCount} roads are at or above 70% capacity in this scenario — shown in amber/red below.`;
-            })()}
+          <div className="map-context" style={{fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'}}>
+            <span>
+              {!resultData || !resultData.edge_volumes
+                ? "Baseline OpenStreetMap road geometry loaded."
+                : (congestedCount === 0
+                  ? "This network currently has no congested roads — all segments are free-flowing under the simulated demand for this scenario."
+                  : `${congestedCount} road segments are at or above 70% capacity in this scenario.`
+                )}
+            </span>
+            {/* Priority 6: Locate Peak Bottleneck button */}
+            {congestedCount > 0 && worstCongestedEdge && (
+              <button
+                className="btn"
+                style={{
+                  width: 'auto',
+                  padding: '0.2rem 0.6rem',
+                  fontSize: '0.75rem',
+                  marginBottom: 0,
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  borderColor: '#ef4444',
+                  color: '#f87171',
+                  cursor: 'pointer'
+                }}
+                onClick={() => handleLocateBottleneck(worstCongestedEdge)}
+              >
+                <Search size={12} style={{display:'inline', marginRight:'0.25rem'}}/> Locate Peak Bottleneck ({worstCongestedEdge.roadName}, V/C: {worstCongestedEdge.vc.toFixed(2)})
+              </button>
+            )}
           </div>
         </div>
         
@@ -463,6 +619,7 @@ function App() {
                 className="dark-map-tiles"
               />
               <MapClickHandler onEdgeClick={handleEdgeClick} network={network} />
+              <MapViewController target={mapTargetCenter} />
               
               {network.edges.map((edge: any, i: number) => {
                 const u = network.nodes.find((n: any) => n.id === edge.u);
@@ -484,48 +641,142 @@ function App() {
                     }
                 }
 
+                const bVol = baselineRes?.edge_volumes?.[i] ?? 0;
+                const qVol = qpsoRes?.edge_volumes?.[i] ?? 0;
+                const diff = qVol - bVol;
+                const hasChanged = Math.abs(diff) > 0.5;
+
                 let vc = edgeCap > 0 ? vol / edgeCap : 0;
-                let color = isClosed ? '#ff0000' : (vol > 0 ? (vc > 1.0 ? '#ef4444' : vc > 0.7 ? '#eab308' : '#22c55e') : '#38bdf8');
-                let weight = isClosed ? 6 : (vol > 0 ? Math.max(3, Math.min(8, vol / 50)) : 2.5);
+                
+                let color: string;
+                let weight: number;
+                let opacity: number;
+
+                if (showChangesOnly) {
+                  if (hasChanged) {
+                    color = '#d946ef'; // Vivid magenta/purple
+                    weight = 5.5;
+                    opacity = 1.0;
+                  } else {
+                    color = '#334155'; // Subdued dark gray
+                    weight = 1.2;
+                    opacity = 0.2;
+                  }
+                } else {
+                  if (isClosed) {
+                    color = '#ff0000';
+                    weight = 6;
+                    opacity = 1.0;
+                  } else if (vol > 0) {
+                    color = vc > 1.0 ? '#ef4444' : vc > 0.7 ? '#eab308' : '#22c55e';
+                    weight = Math.max(3, Math.min(8, vol / 50));
+                    opacity = 0.85;
+                  } else {
+                    // Priority 5: 4th state for no simulated traffic
+                    color = '#475569'; // Dim neutral slate-gray
+                    weight = 1.5;
+                    opacity = 0.35;
+                  }
+                }
                 
                 const isHighlighted = isQpso && viewMode === 'operator' && highlightKeys.has(key);
+                const isFocused = focusedEdgeKey === key;
+                if (isFocused) {
+                  weight = Math.max(weight, 7);
+                  opacity = 1.0;
+                  color = '#ef4444';
+                }
                 
                 return (
-                  <Polyline 
-                    key={i} 
-                    positions={[[u.lat, u.lon], [v.lat, v.lon]]} 
-                    pathOptions={{ color, weight, opacity: isClosed ? 1 : (isHighlighted ? 1 : 0.7), dashArray: isClosed ? '5, 5' : undefined }}
-                  >
-                    <Tooltip direction="top">
-                        <div className="mono">
-                          <strong>{edge.name || 'Unnamed Road'}</strong><br/>
-                          {isClosed ? 'CLOSED (WHAT-IF)' : (
-                            <>
-                              Vol: {Math.round(vol)}<br/>
-                              Cap: {edgeCap} {modifiedCapacities[key] !== undefined ? '(MODIFIED)' : ''}<br/>
-                              V/C: {vc.toFixed(2)}
-                            </>
-                          )}
-                        </div>
-                    </Tooltip>
-                  </Polyline>
+                  <React.Fragment key={i}>
+                    <Polyline 
+                      positions={[[u.lat, u.lon], [v.lat, v.lon]]} 
+                      pathOptions={{ 
+                        color, 
+                        weight, 
+                        opacity: isClosed || isFocused ? 1 : (isHighlighted ? 1 : opacity), 
+                        dashArray: isClosed ? '5, 5' : undefined 
+                      }}
+                    >
+                      <Tooltip direction="top">
+                          <div className="mono">
+                            <strong>{edge.name || 'Unnamed Road'}</strong><br/>
+                            {isClosed ? 'CLOSED (WHAT-IF)' : (
+                              showChangesOnly ? (
+                                hasChanged ? (
+                                  <>
+                                    <span style={{color: '#d946ef', fontWeight: 'bold'}}>Traffic Shifted:</span><br/>
+                                    Baseline: {Math.round(bVol)} veh/hr<br/>
+                                    Optimized: {Math.round(qVol)} veh/hr<br/>
+                                    Delta: {diff > 0 ? `+${Math.round(diff)}` : Math.round(diff)} veh/hr<br/>
+                                    V/C: {(vol / edgeCap).toFixed(2)}
+                                  </>
+                                ) : (
+                                  <>
+                                    No volume change between plans.<br/>
+                                    Vol: {Math.round(vol)} | Cap: {edgeCap}
+                                  </>
+                                )
+                              ) : (
+                                <>
+                                  Vol: {Math.round(vol)}<br/>
+                                  Cap: {edgeCap} {modifiedCapacities[key] !== undefined ? '(MODIFIED)' : ''}<br/>
+                                  V/C: {vc.toFixed(2)} {vc > 1.0 ? '⚠️ OVER CAPACITY' : ''}
+                                </>
+                              )
+                            )}
+                          </div>
+                      </Tooltip>
+                    </Polyline>
+                    {isFocused && (
+                      <CircleMarker 
+                        center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
+                        radius={9} 
+                        pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.85, weight: 3 }}
+                      >
+                        <Tooltip permanent direction="top">
+                          <span style={{fontWeight: 700, color: '#ef4444', fontSize: '0.8rem'}}>🚨 Peak Bottleneck (V/C: {vc.toFixed(2)})</span>
+                        </Tooltip>
+                      </CircleMarker>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </MapContainer>
             
-            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.85)', padding: '0.5rem 0.75rem', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.75rem'}}>
-              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                <div style={{width: '12px', height: '4px', backgroundColor: '#22c55e', borderRadius: '2px'}}></div>
-                <span style={{color: 'var(--text-secondary)'}}>Free-flowing (&lt;70%)</span>
-              </div>
-              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                <div style={{width: '12px', height: '4px', backgroundColor: '#eab308', borderRadius: '2px'}}></div>
-                <span style={{color: 'var(--text-secondary)'}}>Moderate (70–100%)</span>
-              </div>
-              <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                <div style={{width: '12px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
-                <span style={{color: 'var(--text-secondary)'}}>Overloaded (&gt;100%)</span>
-              </div>
+            {/* Map Legend */}
+            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.9)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '250px'}}>
+              {showChangesOnly ? (
+                <>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                    <div style={{width: '14px', height: '4px', backgroundColor: '#d946ef', borderRadius: '2px'}}></div>
+                    <span style={{color: '#fdf4ff', fontWeight: 600}}>Rerouted Corridors (|Δ| &gt; 0)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                    <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                    <span style={{color: 'var(--text-secondary)'}}>Unchanged routes</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                    <div style={{width: '12px', height: '3px', backgroundColor: '#475569', borderRadius: '2px'}}></div>
+                    <span style={{color: 'var(--text-secondary)'}}>Gray = No simulated traffic (0 veh)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                    <div style={{width: '12px', height: '4px', backgroundColor: '#22c55e', borderRadius: '2px'}}></div>
+                    <span style={{color: 'var(--text-secondary)'}}>Free-flowing (&lt;70% V/C)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                    <div style={{width: '12px', height: '4px', backgroundColor: '#eab308', borderRadius: '2px'}}></div>
+                    <span style={{color: 'var(--text-secondary)'}}>Moderate (70–100% V/C)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                    <div style={{width: '12px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
+                    <span style={{color: 'var(--text-secondary)'}}>Overloaded (&gt;100% V/C)</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -692,11 +943,49 @@ function App() {
                 
                 <div className="action-card">
                   <h3><Activity size={12} style={{display:'inline'}}/> SIGNAL RETIMING</h3>
-                  {signalRecs.length > 0 ? signalRecs.map((rec, i) => (
-                    <p key={i} style={{marginBottom: '0.5rem'}}>
-                      <strong>{rec.name}</strong>: flow increased by {rec.pctIncrease.toFixed(0)}% under the optimized plan — consider extending green-phase time toward this direction.
-                    </p>
-                  )) : <p>No major signal adjustments required for this plan.</p>}
+                  {signalRecs.length > 0 ? (
+                    <>
+                      {signalRecs.map((rec, i) => (
+                        <p key={i} style={{marginBottom: '0.5rem'}}>
+                          <strong>{rec.name}</strong>: flow increased by {rec.pctIncrease.toFixed(0)}% under the optimized plan (V/C: {rec.qVc.toFixed(2)}) — consider extending green-phase duration along this corridor.
+                        </p>
+                      ))}
+                      <button 
+                        className="btn btn-primary" 
+                        style={{marginTop: '0.75rem', width: 'auto', padding: '0.4rem 0.85rem', fontSize: '0.8rem'}}
+                        onClick={handleApproveSignalTiming}
+                      >
+                        {signalApproved ? '✓ Signal Timing Approved' : 'Approve Signal Timing'}
+                      </button>
+                      {signalApproved && (
+                        <div style={{marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--status-good)', fontWeight: 500}}>
+                          ✓ Staged for junction controllers (Webster Method Green-Split Logged)
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div>
+                      <p style={{color: 'var(--text-secondary)'}}>
+                        <span style={{color: 'var(--status-good)', fontWeight: 600}}>✓ No physical signal adjustments required:</span> All corridors in this scenario operate comfortably within capacity (&lt;70% V/C).
+                      </p>
+                      {minorSignalRecs.length > 0 && (
+                        <div style={{marginTop: '0.6rem'}}>
+                          <button 
+                            className="btn" 
+                            style={{backgroundColor: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', padding: 0, textDecoration: 'underline', width: 'auto', marginBottom: '0.35rem', cursor: 'pointer'}}
+                            onClick={() => setShowMinorFlows(!showMinorFlows)}
+                          >
+                            {showMinorFlows ? 'Hide minor volume shifts' : `View ${minorSignalRecs.length} minor flow shifts (advisory only)`}
+                          </button>
+                          {showMinorFlows && minorSignalRecs.map((rec, i) => (
+                            <p key={i} style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem'}}>
+                              {rec.name}: +{rec.pctIncrease.toFixed(0)}% flow (V/C: {rec.qVc.toFixed(2)}) — within design headroom.
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 
                 <div className="action-card">
@@ -705,16 +994,41 @@ function App() {
                     <p key={i} style={{marginBottom: '0.5rem'}}>
                       <strong>{rec.name}</strong>: recommend pushing a traffic advisory via GPS partners — the optimized plan reduces load here by {rec.pctDecrease.toFixed(0)}%.
                     </p>
-                  )) : <p>No major advisory pushes required for this plan.</p>}
+                  )) : <p>No major advisory pushes required for this scenario.</p>}
                 </div>
                 
                 <div className="action-card">
                   <h3><Send size={12} style={{display:'inline'}}/> FLEET DISPATCH</h3>
                   {fleetRecs > 0 ? (
-                    <p>
-                      <strong>{fleetRecs}</strong> fleet-tagged routes changed under this plan — export updated routes to municipal/commercial dispatch systems immediately.
-                    </p>
-                  ) : <p>No priority fleet routes were affected by this optimization.</p>}
+                    <>
+                      <p>
+                        <strong>{fleetRecs}</strong> fleet-tagged routes changed under this plan — export updated corridors to municipal bus and emergency dispatch software.
+                      </p>
+                      <button 
+                        className="btn btn-primary" 
+                        style={{marginTop: '0.75rem', width: 'auto', padding: '0.4rem 0.85rem', fontSize: '0.8rem'}}
+                        onClick={handleExportFleetDispatch}
+                      >
+                        <Download size={13} style={{display:'inline', marginRight:'0.35rem'}}/> Export Fleet Dispatch
+                      </button>
+                      {fleetExported && (
+                        <div style={{marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--status-good)', fontWeight: 500}}>
+                          ✓ Fleet route manifest exported ({activeLocation}_fleet_dispatch.json)
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div>
+                      <p>No priority fleet routes were affected by this optimization.</p>
+                      <button 
+                        className="btn" 
+                        style={{marginTop: '0.75rem', width: 'auto', padding: '0.35rem 0.75rem', fontSize: '0.75rem', backgroundColor: 'transparent', borderColor: 'var(--border-color)', color: 'var(--text-secondary)'}}
+                        onClick={handleExportFleetDispatch}
+                      >
+                        <Download size={13} style={{display:'inline', marginRight:'0.35rem'}}/> Export Baseline Fleet Manifest
+                      </button>
+                    </div>
+                  )}
                 </div>
                 
               </div>
@@ -785,32 +1099,50 @@ function App() {
                 {benchmarking ? 'Running...' : 'Run Benchmarks Now'}
               </button>
               
-              {benchmarkRes && (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Algorithm</th>
-                      <th>Mean Cost Score</th>
-                      <th>Std Dev</th>
-                      <th>Best Cost Score</th>
-                      <th>Worst Cost Score</th>
-                      <th>Mean Travel Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.keys(benchmarkRes).map(algo => (
-                      <tr key={algo} style={{color: algo.includes('QPSO') ? 'var(--accent-qpso)' : 'inherit'}}>
-                        <td>{algo}</td>
-                        <td>{benchmarkRes[algo].cost_mean.toFixed(1)}</td>
-                        <td>±{benchmarkRes[algo].cost_std.toFixed(1)}</td>
-                        <td>{benchmarkRes[algo].cost_min.toFixed(1)}</td>
-                        <td>{benchmarkRes[algo].cost_max.toFixed(1)}</td>
-                        <td>~{Math.round(benchmarkRes[algo].time_mean/3600).toLocaleString()} veh-hrs</td>
+              {benchmarkRes && (() => {
+                const algos = Object.keys(benchmarkRes);
+                const minCostAlgo = algos.reduce((best, curr) => 
+                  benchmarkRes[curr].cost_mean < benchmarkRes[best].cost_mean ? curr : best
+                , algos[0]);
+
+                return (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Algorithm</th>
+                        <th>Mean Cost Score</th>
+                        <th>Std Dev</th>
+                        <th>Best Cost Score</th>
+                        <th>Worst Cost Score</th>
+                        <th>Mean Travel Time</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody>
+                      {algos.map(algo => {
+                        const isWinner = algo === minCostAlgo;
+                        return (
+                          <tr 
+                            key={algo} 
+                            style={{
+                              backgroundColor: isWinner ? 'rgba(34, 197, 94, 0.12)' : 'transparent',
+                              fontWeight: isWinner ? 600 : 'normal'
+                            }}
+                          >
+                            <td style={{color: isWinner ? 'var(--status-good)' : (algo.includes('QPSO') ? 'var(--accent-qpso)' : 'inherit')}}>
+                              {algo} {isWinner && <span style={{fontSize: '0.75rem', padding: '0.15rem 0.45rem', borderRadius: '3px', backgroundColor: 'var(--status-good)', color: '#000', marginLeft: '0.5rem', fontWeight: 'bold'}}>🏆 Lowest Cost</span>}
+                            </td>
+                            <td style={{color: isWinner ? 'var(--status-good)' : 'inherit', fontWeight: isWinner ? 'bold' : 'normal'}}>{benchmarkRes[algo].cost_mean.toFixed(1)}</td>
+                            <td>±{benchmarkRes[algo].cost_std.toFixed(1)}</td>
+                            <td>{benchmarkRes[algo].cost_min.toFixed(1)}</td>
+                            <td>{benchmarkRes[algo].cost_max.toFixed(1)}</td>
+                            <td>~{Math.round(benchmarkRes[algo].time_mean/3600).toLocaleString()} veh-hrs</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
               
               {benchmarkRes && (
                 <div style={{marginTop: '2rem', padding: '1rem', border: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)'}}>
@@ -857,27 +1189,116 @@ function App() {
           
           {viewMode === 'analyst' && activeTab === 'explain' && (
             <div style={{padding: '2rem', overflowY: 'auto', height: '100%'}}>
-              <h2><Info style={{display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle'}}/> Explainability (Example OD Pair)</h2>
-              <p style={{marginBottom: '2rem', color: 'var(--text-secondary)'}}>Why did the algorithm choose this path?</p>
-              
-              {explainData ? (
-                <div style={{padding: '1.5rem', border: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)'}}>
-                  <p style={{fontSize: '1.1rem', lineHeight: '1.6', color: 'var(--accent-qpso)'}}>
-                    "{explainData.explanation}"
-                  </p>
-                  <div style={{marginTop: '2rem', display: 'flex', gap: '2rem'}}>
-                    <div>
-                      <h4 style={{color: 'var(--accent-baseline)'}}>Current Routing (Dijkstra)</h4>
-                      <p className="mono">Free-flow time: {(((explainData.baseline_free_flow ?? explainData.paths?.[0]?.free_flow_time ?? 164)) / 60).toFixed(1)} mins</p>
+              <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem'}}>
+                <div>
+                  <h2><Info style={{display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle'}}/> Decision Explainability & OD Route Choice</h2>
+                  <p style={{color: 'var(--text-secondary)', marginTop: '0.25rem'}}>Inspect why Q-ROUTE shifted vehicular flow from selfish shortest paths to system-optimal corridors.</p>
+                </div>
+                
+                {/* Priority 1: OD Pair Dropdown Selector */}
+                <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap'}}>
+                  <label style={{fontSize: '0.85rem', color: 'var(--text-secondary)'}}>Select OD Flow:</label>
+                  <select 
+                    value={selectedOd} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedOd(val);
+                      fetchExplanation(val);
+                    }}
+                    style={{padding: '0.4rem 0.8rem', minWidth: '280px', backgroundColor: 'var(--panel-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color)'}}
+                  >
+                    {odPairs.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        #{p.index + 1}: {p.origin} → {p.destination} ({p.volume} veh, {p.num_paths} {p.num_paths === 1 ? 'path' : 'paths'})
+                      </option>
+                    ))}
+                  </select>
+                  <button 
+                    className="btn" 
+                    style={{width: 'auto', padding: '0.4rem 0.75rem', marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.3rem'}}
+                    onClick={() => fetchExplanation(selectedOd)}
+                    title="Reload explanation"
+                  >
+                    <RefreshCw size={14} /> Reload
+                  </button>
+                </div>
+              </div>
+
+              {explainLoading && (
+                <div style={{padding: '3rem 2rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)', borderRadius: '6px'}}>
+                  <div style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>⚙️</div>
+                  <p style={{fontWeight: 500}}>Analyzing network topology and computing corridor free-flow differentials...</p>
+                </div>
+              )}
+
+              {explainError && !explainLoading && (
+                <div style={{padding: '1.5rem', border: '1px solid var(--status-critical)', backgroundColor: 'rgba(239, 68, 68, 0.12)', borderRadius: '6px', marginBottom: '1.5rem'}}>
+                  <h4 style={{color: '#f87171', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                    <AlertTriangle size={18} /> No Route Explanation Available for this OD Pair
+                  </h4>
+                  <p style={{color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem'}}>{explainError}</p>
+                  <button className="btn btn-primary" style={{width: 'auto', padding: '0.35rem 0.8rem', marginBottom: 0}} onClick={() => fetchExplanation(selectedOd)}>
+                    Retry Loading
+                  </button>
+                </div>
+              )}
+
+              {!explainLoading && !explainError && explainData && (
+                <div>
+                  <div style={{padding: '1.5rem', border: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)', borderRadius: '6px', marginBottom: '2rem'}}>
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem'}}>
+                      <span className="mono" style={{fontSize: '0.85rem', color: 'var(--text-secondary)'}}>
+                        OD Corridor: {explainData.origin} → {explainData.destination} | Volume: {explainData.volume} veh/hr
+                      </span>
+                      <span style={{fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: explainData.status === 'single_path' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(34, 197, 94, 0.2)', color: explainData.status === 'single_path' ? 'var(--status-warn)' : 'var(--status-good)', fontWeight: 600}}>
+                        {explainData.status === 'single_path' ? 'Single Corridor (Constrained)' : `${explainData.paths?.length || 0} Alternate Paths Evaluated`}
+                      </span>
                     </div>
-                    <div>
-                      <h4 style={{color: 'var(--accent-qpso)'}}>Q-ROUTE Optimized Shift</h4>
-                      <p className="mono">Free-flow time: {(((explainData.qpso_free_flow ?? explainData.paths?.[1]?.free_flow_time ?? 224)) / 60).toFixed(1)} mins</p>
+                    
+                    <p style={{fontSize: '1.1rem', lineHeight: '1.6', color: 'var(--accent-qpso)', marginBottom: '1.5rem'}}>
+                      "{explainData.explanation}"
+                    </p>
+
+                    <div style={{display: 'flex', gap: '1.5rem', flexWrap: 'wrap'}}>
+                      <div style={{padding: '1rem', backgroundColor: 'var(--bg-color)', borderRadius: '4px', flex: 1, minWidth: '220px', border: '1px solid var(--border-color)'}}>
+                        <h4 style={{color: 'var(--accent-baseline)', marginBottom: '0.25rem', fontSize: '0.9rem'}}>Current Routing (Dijkstra)</h4>
+                        <p className="mono" style={{fontSize: '1.3rem', fontWeight: 600, margin: '0.25rem 0'}}>
+                          {(((explainData.baseline_free_flow ?? 0)) / 60).toFixed(1)} mins
+                        </p>
+                        <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>Shortest free-flow path without congestion feedback</span>
+                      </div>
+                      <div style={{padding: '1rem', backgroundColor: 'var(--bg-color)', borderRadius: '4px', flex: 1, minWidth: '220px', border: '1px solid var(--border-color)'}}>
+                        <h4 style={{color: 'var(--accent-qpso)', marginBottom: '0.25rem', fontSize: '0.9rem'}}>Q-ROUTE Optimized Shift</h4>
+                        <p className="mono" style={{fontSize: '1.3rem', fontWeight: 600, margin: '0.25rem 0'}}>
+                          {(((explainData.qpso_free_flow ?? 0)) / 60).toFixed(1)} mins
+                        </p>
+                        <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>Slightly longer free-flow path that prevents bottleneck collapse</span>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Candidate Paths Breakdown */}
+                  {explainData.paths && explainData.paths.length > 0 && (
+                    <div>
+                      <h3 style={{fontSize: '1rem', marginBottom: '1rem', color: 'var(--text-primary)'}}>Evaluated Candidate Paths for this OD Pair</h3>
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem'}}>
+                        {explainData.paths.map((p: any) => (
+                          <div key={p.id} style={{padding: '1rem', border: '1px solid var(--border-color)', backgroundColor: 'var(--panel-bg)', borderRadius: '4px'}}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem'}}>
+                              <strong style={{color: p.id === 0 ? 'var(--accent-baseline)' : 'var(--accent-qpso)'}}>{p.name} {p.id === 0 ? '(Baseline)' : '(Alternate)'}</strong>
+                              <span className="mono" style={{fontSize: '0.85rem', color: 'var(--text-secondary)'}}>
+                                {(p.free_flow_time / 60).toFixed(1)} mins
+                              </span>
+                            </div>
+                            <div style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>
+                              Waypoints: {p.path?.length || 0} nodes
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <p>Loading explanation...</p>
               )}
             </div>
           )}

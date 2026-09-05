@@ -577,13 +577,16 @@ Where:
    > *"Suggested: Peak Hour - current time falls within morning rush window."*
 4. **Apply Mode:** Operator clicks **Apply Suggestion**, setting weights to $w_t=10, w_c=1, w_e=1, w_p=5$.
 5. **Execute Optimization:** Clicks **RUN OPTIMIZATION**. The server computes Dijkstra and QPSO in under 500 ms.
-6. **Review Impact:** Executive banner reports:
-   - **+18.2% Total Efficiency Improvement**
-   - **42 Minutes Saved per 100 Trips**
-   - **2 Structural Bottlenecks Resolved (0 Over-Capacity Links Remaining)**
+6. **Review Impact:** Executive banner reports real-time metrics based on the active scenario:
+   - **Peak Congestion / Incident Scenarios (e.g. Koramangala Peak 1.2x Demand or Road Closure):**
+     - Up to **-78.3% Objective Cost Reduction** (from 5316.47 down to 1155.11 $\pm$ 102.10)
+     - **Arterial Gridlock Relieved** (Peak $V/C$ dropped from 1.112 down to 1.044, protecting the primary corridor from collapse)
+   - **Default Baseline Scenario (Koramangala 1.0x Base Demand):**
+     - Network is safely uncongested ($V/C \le 0.926$, **0 structural bottlenecks**).
+     - Efficiency delta is ~0.2% (Dijkstra: 262.80 vs QPSO: 262.71), confirming that Q-ROUTE does not inject unnecessary synthetic detours when roads are free-flowing.
 7. **Action Dispatch:**
-   - Clicks **Approve Signal Timing** to send green-split adjustments to junction controllers.
-   - Clicks **Export Fleet Dispatch** to push route manifests to city bus dispatch software.
+   - Clicks **Approve Signal Timing** on the Signal Retiming card, displaying the Webster green-split dispatch confirmation badge (`✓ Signal Retiming Plan Approved & Dispatched via Webster split`).
+   - Clicks **Export Fleet Dispatch** to instantly download the JSON route manifest (`qroute_fleet_dispatch_koramangala_<timestamp>.json`) for integration into city transit and fleet dispatch systems.
 8. **Animate Evolution:** Operator clicks **Play** on the animation toolbar to watch the swarm shift volume from red corridors into green secondary avenues across 30 iterations.
 
 #### Walkthrough B: What-If Road Closure Simulation (Analyst Workflow)
@@ -597,11 +600,12 @@ Where:
 6. **Verify Statistical Significance:**
    - Navigates to **Multi-Algorithm Benchmark** in the sidebar.
    - Clicks **Run Benchmarks Now** (10 random seeds).
-   - Validates that QPSO consistently achieves a mean fitness of **862.4** ($\pm 18.2$), outperforming both Dijkstra (**1029.6**) and Genetic Algorithm (**1297.3**).
+   - In congested urban corridors (e.g., **Mylapore 1.0x Saturated Urban Network**), validates that QPSO achieves a mean cost of **417.8** ($\pm 23.6$), outperforming Dijkstra (**957.4**) by **-57.2%** and eliminating **73% of capacity bottlenecks** (3 down to 0.8).
+   - In free-flowing conditions (**Koramangala 1.0x Base Demand**), all algorithms score within numerical noise (Dijkstra: 262.80, TA-Dijkstra: 262.03, GA: 262.80, QPSO: 262.71 $\pm$ 0.16) with 0 capacity violations, highlighting whichever algorithm achieved the lowest mean cost for that run.
 7. **Inspect Trip Explainability:**
    - Navigates to **Decision Explainability**.
-   - Inspects trip `10775075568_10282769895`.
-   - The engine explains: *"Naive baseline routed through a severe bottleneck. Q-ROUTE shifted traffic to an alternate path that takes 1.0 min longer in free-flow conditions, but eliminates capacity violations, lowering total network travel time."*
+   - Selects an OD pair from the dropdown (e.g., trip `10775075568_10282769895`).
+   - The engine explains: *"Baseline shortest path routed through congested arterial segments. Q-ROUTE diversified traffic across parallel corridors, balancing network volume to prevent capacity violations while keeping travel time within 1.2 minutes of baseline."*
 
 ---
 
@@ -692,6 +696,7 @@ Fetches complete graph topology, edge capacities, speed limits, and coordinate m
 Executes deterministic Dijkstra shortest-path assignment representing uncoordinated User Equilibrium.
 - **Query Parameters:** `location` (string, default: `"koramangala"`)
 - **Request Body (`WeightsParams`):**
+  *Example A: What-If Road Closure Incident (Bridge Edge `10775075568_11964440743_0` set to capacity 0.0):*
   ```json
   {
     "time": 1.0,
@@ -704,7 +709,7 @@ Executes deterministic Dijkstra shortest-path assignment representing uncoordina
     "silent": false
   }
   ```
-- **Response (200 OK):**
+- **Response under Incident Scenario (200 OK):**
   ```json
   {
     "algorithm": "Dijkstra (Baseline)",
@@ -720,6 +725,7 @@ Executes deterministic Dijkstra shortest-path assignment representing uncoordina
     "runtime": 0.015
   }
   ```
+  *(Note: In the nominal default scenario with no closures, Dijkstra fitness is 262.80, capacity violations count is 0, and max V/C is 0.926).*
 
 #### `POST /optimize/qpso`
 Executes Quantum-Behaved Particle Swarm Optimization to find System Optimum flow distribution.
@@ -728,7 +734,7 @@ Executes Quantum-Behaved Particle Swarm Optimization to find System Optimum flow
   - `iterations` (integer, default: `30`): Number of quantum search epochs.
   - `location` (string, default: `"koramangala"`): Target urban sector.
 - **Request Body:** `WeightsParams` (same schema as baseline).
-- **Response (200 OK):**
+- **Response under Incident Scenario (200 OK):**
   ```json
   {
     "algorithm": "QPSO (Q-ROUTE)",

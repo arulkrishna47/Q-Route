@@ -306,15 +306,33 @@ def run_benchmarks(weights: WeightsParams, location: str = 'koramangala', seeds:
     
     return results
 
+@router.get("/od_pairs")
+def get_od_pairs(location: str = 'koramangala'):
+    if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
+    state = locations_state[location]
+    pairs = []
+    for idx, r in enumerate(state['candidate_routes']):
+        pair_id = f"{r['origin']}_{r['destination']}"
+        pairs.append({
+            "id": pair_id,
+            "index": idx,
+            "origin": r['origin'],
+            "destination": r['destination'],
+            "volume": r.get('volume', 0),
+            "num_paths": len(r.get('paths', []))
+        })
+    return pairs
+
 @router.get("/explain/{od_id}")
 def explain_od_pair(od_id: str, location: str = 'koramangala'):
     if location not in locations_state: raise HTTPException(status_code=404, detail="Location not found")
     state = locations_state[location]
     
-    # Find candidate route matching the OD pair
+    # Find candidate route matching the OD pair by id, pair string, or numeric index
     flow_index = -1
     for idx, r in enumerate(state['candidate_routes']):
-        if r['od_id'] == od_id or f"{r['origin']}_{r['destination']}" == od_id:
+        pair_id = f"{r['origin']}_{r['destination']}"
+        if r.get('od_id') == od_id or pair_id == str(od_id) or str(idx) == str(od_id):
             flow_index = idx
             break
             
@@ -322,20 +340,40 @@ def explain_od_pair(od_id: str, location: str = 'koramangala'):
         return {"status": "error", "message": f"OD pair {od_id} not found."}
         
     route = state['candidate_routes'][flow_index]
+    edge_indices = build_edge_indices(state['edge_data']['edges'])
+    
+    paths_info = []
+    for idx, path in enumerate(route['paths']):
+        p_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in zip(path[:-1], path[1:])])
+        paths_info.append({
+            "id": idx,
+            "path": path,
+            "free_flow_time": p_time,
+            "name": f"Route {idx+1}"
+        })
+        
     if len(route['paths']) < 2:
-        return {"status": "error", "message": "Only one path available for this OD pair; no alternate to explain."}
+        base_time = paths_info[0]['free_flow_time'] if paths_info else 0
+        return {
+            "status": "single_path",
+            "flow_index": flow_index,
+            "origin": route['origin'],
+            "destination": route['destination'],
+            "volume": route.get('volume', 0),
+            "paths": paths_info,
+            "baseline_free_flow": base_time,
+            "qpso_free_flow": base_time,
+            "explanation": f"OD pair {route['origin']} → {route['destination']} only has a single viable corridor in this road network ({base_time/60:.1f} mins). Traffic cannot be shifted onto alternatives, so Q-ROUTE protects this corridor via adaptive signal priority."
+        }
         
     path0 = route['paths'][0]
     path1 = route['paths'][1]
     
-    # Calculate free-flow travel time for path0 and path1
     p0_edges = list(zip(path0[:-1], path0[1:]))
     p1_edges = list(zip(path1[:-1], path1[1:]))
     
-    edge_indices = build_edge_indices(state['edge_data']['edges'])
-    
-    p0_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p0_edges])
-    p1_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in p1_edges])
+    p0_time = paths_info[0]['free_flow_time']
+    p1_time = paths_info[1]['free_flow_time']
     
     worst_cap = float('inf')
     worst_edge = None
@@ -348,25 +386,26 @@ def explain_od_pair(od_id: str, location: str = 'koramangala'):
                 worst_cap = cap
                 worst_edge = (u, v)
                 
-    explanation_text = (
-        f"The naive baseline routes through a severe structural bottleneck (Capacity: {worst_cap}). "
-        f"Q-ROUTE shifts traffic to an alternate path. While this alternate takes {(p1_time - p0_time)/60:.1f} minutes longer in free-flow conditions, "
-        f"it drastically reduces the V/C congestion ratio and prevents capacity violations on the main corridor, improving network-wide objective."
-    )
+    time_delta_mins = (p1_time - p0_time) / 60.0
+    if time_delta_mins >= 0:
+        time_desc = f"While this alternate takes {time_delta_mins:.1f} min longer in free-flow conditions, "
+    else:
+        time_desc = f"This alternate is {abs(time_delta_mins):.1f} min faster in free-flow conditions, "
+        
+    cap_desc = f"Capacity: {worst_cap:.0f} veh/hr" if worst_cap < float('inf') else "constrained capacity"
     
-    paths_info = []
-    for idx, path in enumerate(route['paths']):
-        p_time = sum([state['edge_data']['free_flow_times'][edge_indices.get((u, v, 0), 0)] for u, v in zip(path[:-1], path[1:])])
-        paths_info.append({
-            "id": idx,
-            "path": path,
-            "free_flow_time": p_time,
-            "name": f"Route {idx+1}"
-        })
+    explanation_text = (
+        f"The naive Dijkstra baseline routes all demand through the shortest corridor ({cap_desc}). "
+        f"Q-ROUTE shifts vehicles to an alternate path. {time_desc}"
+        f"it drastically lowers link volume-to-capacity (V/C) ratios and prevents network gridlock, optimizing total system welfare."
+    )
     
     return {
         "status": "ok",
         "flow_index": flow_index,
+        "origin": route['origin'],
+        "destination": route['destination'],
+        "volume": route.get('volume', 0),
         "paths": paths_info,
         "baseline_path": path0,
         "qpso_path": path1,

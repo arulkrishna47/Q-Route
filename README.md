@@ -101,7 +101,10 @@ Evaluated across 10 randomized seeds using OpenStreetMap geometry and calibrated
 *\*Note on Travel Time Trade-Off: By routing a fraction of vehicles along slightly longer parallel arterials, Q-ROUTE prevents catastrophic link oversaturation. While free-flow distance increases slightly, network-wide congestion penalties and queueing delays are eliminated, reducing total system cost by 57.2%.*
 
 ### Peak Congestion Scenario (Koramangala, Demand Multiplier = 1.2)
-*Under 1.2x peak morning rush, Dijkstra collapses a key arterial into severe saturation ($V/C = 1.112$, Cost = 5316.47). QPSO clears the congestion bottleneck and slashes total system cost by **78.8%** down to 1127.13 $\pm$ 77.46.*
+*Under 1.2x peak morning rush, Dijkstra collapses a key arterial into severe saturation ($V/C = 1.112$, Cost = 5316.47). QPSO clears the congestion bottleneck and slashes total system cost by **78.3%** down to 1155.11 $\pm$ 102.10 (best seed: 1044.20).*
+
+### Default Baseline Scenario (Koramangala, Base Demand Multiplier = 1.0)
+*In the default uncongested scenario (Standard Mode, weights $w_t=1, w_c=1, w_e=1, w_p=1$), all road segments operate safely within capacity ($V/C \le 0.926$, **0 structural bottlenecks**). In this regime, the naive shortest-path (Dijkstra) is already mathematically near-optimal (Cost = 262.80). All four algorithms converge within noise (Dijkstra: 262.80, TA-Dijkstra: 262.03, GA: 262.80, QPSO: 262.71 $\pm$ 0.16). This validates that Q-ROUTE preserves baseline efficiency without imposing artificial detours when the network is free-flowing.*
 
 ---
 
