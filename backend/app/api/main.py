@@ -291,7 +291,7 @@ def run_benchmarks(weights: WeightsParams, location: str = 'mylapore', seeds: in
     qpso_bottlenecks = []
     for s in range(seeds):
         np.random.seed(s)
-        q_res = qpso_optimize(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, num_particles=15, max_iter=20)
+        q_res = qpso_optimize(scaled_routes, state['edge_data'], w_dict, evaluate_assignment, num_particles=25, max_iter=35)
         qpso_costs.append(q_res['fitness'])
         qpso_times.append(q_res['metrics']['total_travel_time'])
         qpso_vcs.append(q_res['metrics']['max_vc'])
