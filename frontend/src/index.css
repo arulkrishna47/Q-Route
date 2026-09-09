@@ -535,6 +535,12 @@ h1, h2, h3, h4, h5, h6, .header-text {
   color: var(--status-warn);
 }
 
+.flow-arrow-marker {
+  background: none !important;
+  border: none !important;
+}
+
+
 
 .loader {
   border: 3px solid var(--border-color);

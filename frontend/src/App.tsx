@@ -35,6 +35,39 @@ const advisoryIcon = new L.DivIcon({
   iconAnchor: [14, 14]
 });
 
+function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const lat1Rad = (lat1 * Math.PI) / 180;
+  const lat2Rad = (lat2 * Math.PI) / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2Rad);
+  const x =
+    Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+    Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return (brng + 360) % 360;
+}
+
+const arrowIconCache: Record<string, L.DivIcon> = {};
+
+function getArrowIcon(bearing: number, color: string): L.DivIcon {
+  const roundedBearing = Math.round(bearing / 5) * 5;
+  const key = `${roundedBearing}_${color}`;
+  if (!arrowIconCache[key]) {
+    arrowIconCache[key] = new L.DivIcon({
+      className: 'flow-arrow-marker',
+      html: `<div style="transform: rotate(${roundedBearing}deg); display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; pointer-events: none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="${color}" stroke="#0f172a" stroke-width="1.5" stroke-linejoin="round" style="filter: drop-shadow(0 0 4px ${color});">
+          <path d="M12 2L19 19L12 15L5 19L12 2Z" />
+        </svg>
+      </div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+  }
+  return arrowIconCache[key];
+}
+
+
 function MapClickHandler({ onEdgeClick, network }: any) {
   useMapEvents({
     click(e) {
@@ -867,6 +900,14 @@ function App() {
                   color = '#ff334b';
                 }
                 
+                const hasValidCoords = u && v && (u.lat !== v.lat || u.lon !== v.lon);
+                const showArrow = !isClosed && hasValidCoords && (
+                  (isQpso && (diff > 1.5 || (showChangesOnly && diff > 1))) ||
+                  (!isQpso && (diff < -1.5 || (showChangesOnly && diff < -1)))
+                );
+                const arrowColor = isQpso ? '#06b6d4' : '#ef4444';
+                const bearing = hasValidCoords ? calculateBearing(u.lat, u.lon, v.lat, v.lon) : 0;
+                
                 return (
                   <React.Fragment key={i}>
                     <Polyline 
@@ -921,89 +962,110 @@ function App() {
                                   )
                                 )
                               ) : (
-                                <>
-                                  Vol: {Math.round(vol)}<br/>
-                                  Cap: {edgeCap} {modifiedCapacities[key] !== undefined ? '(MODIFIED)' : ''}<br/>
-                                  V/C: {vc.toFixed(2)} {vc > 1.0 ? '⚠️ OVER CAPACITY' : ''}
-                                </>
-                              )
-                            )}
-                          </div>
-                      </Tooltip>
-                    </Polyline>
-                    {isClosed && (
-                      <CircleMarker 
-                        center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
-                        radius={7} 
-                        pathOptions={{ color: '#ffffff', fillColor: '#ef4444', fillOpacity: 1.0, weight: 2 }}
-                      >
-                        <Tooltip permanent direction="top">
-                          <span style={{fontWeight: 700, color: '#ef4444', fontSize: '0.75rem'}}>⛔ CLOSED (WHAT-IF)</span>
-                        </Tooltip>
-                      </CircleMarker>
-                    )}
-                    {isFocused && (
-                      <CircleMarker 
-                        center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
-                        radius={9} 
-                        pathOptions={{ color: '#ffffff', fillColor: '#ff334b', fillOpacity: 0.9, weight: 3 }}
-                      >
-                        <Tooltip permanent direction="top">
-                          <span style={{fontWeight: 700, color: '#ff334b', fontSize: '0.8rem'}}>🚨 Peak Bottleneck (V/C: {vc.toFixed(2)})</span>
-                        </Tooltip>
-                      </CircleMarker>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </MapContainer>
-            
-            {/* Map Legend */}
-            <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.92)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '270px'}}>
-              {showChangesOnly ? (
-                !isQpso ? (
-                  <>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
-                      <div style={{width: '14px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
-                      <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded Chokepoints (Relieved)</span>
-                    </div>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                      <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
-                      <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-overloaded roads</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
-                      <div style={{width: '14px', height: '4px', backgroundColor: '#06b6d4', borderRadius: '2px'}}></div>
-                      <span style={{color: '#a5f3fc', fontWeight: 600}}>Parallel Bypass Corridors (+Flow)</span>
-                    </div>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                      <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
-                      <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-diverted roads</span>
-                    </div>
-                  </>
-                )
-              ) : (
-                <>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
-                    <span style={{color: 'var(--text-secondary)'}}>Gray = No simulated traffic (0 veh)</span>
-                  </div>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '14px', height: '5px', backgroundColor: '#10b981', borderRadius: '2px'}}></div>
-                    <span style={{color: '#a7f3d0', fontWeight: 500}}>Free-flowing (&lt;70% V/C)</span>
-                  </div>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
-                    <div style={{width: '14px', height: '5px', backgroundColor: '#fbbf24', borderRadius: '2px'}}></div>
-                    <span style={{color: '#fde68a', fontWeight: 500}}>Moderate (70–100% V/C)</span>
-                  </div>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                    <div style={{width: '14px', height: '5px', backgroundColor: '#ff334b', borderRadius: '2px'}}></div>
-                    <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded (&gt;100% V/C)</span>
-                  </div>
-                </>
-              )}
+                            <>
+                              Vol: {Math.round(vol)}<br/>
+                              Cap: {edgeCap} {modifiedCapacities[key] !== undefined ? '(MODIFIED)' : ''}<br/>
+                              V/C: {vc.toFixed(2)} {vc > 1.0 ? '⚠️ OVER CAPACITY' : ''}
+                            </>
+                          )
+                        )}
+                      </div>
+                  </Tooltip>
+                </Polyline>
+                {showArrow && (
+                  <Marker 
+                    position={[(u.lat + v.lat) / 2, (u.lon + v.lon) / 2]} 
+                    icon={getArrowIcon(bearing, arrowColor)}
+                    interactive={false}
+                  />
+                )}
+                {isClosed && (
+                  <CircleMarker 
+                    center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
+                    radius={7} 
+                    pathOptions={{ color: '#ffffff', fillColor: '#ef4444', fillOpacity: 1.0, weight: 2 }}
+                  >
+                    <Tooltip permanent direction="top">
+                      <span style={{fontWeight: 700, color: '#ef4444', fontSize: '0.75rem'}}>⛔ CLOSED (WHAT-IF)</span>
+                    </Tooltip>
+                  </CircleMarker>
+                )}
+                {isFocused && (
+                  <CircleMarker 
+                    center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
+                    radius={9} 
+                    pathOptions={{ color: '#ffffff', fillColor: '#ff334b', fillOpacity: 0.9, weight: 3 }}
+                  >
+                    <Tooltip permanent direction="top">
+                      <span style={{fontWeight: 700, color: '#ff334b', fontSize: '0.8rem'}}>🚨 Peak Bottleneck (V/C: {vc.toFixed(2)})</span>
+                    </Tooltip>
+                  </CircleMarker>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </MapContainer>
+        
+        {/* Map Legend */}
+        <div className="map-legend" style={{position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000, pointerEvents: 'none', backgroundColor: 'rgba(15, 23, 42, 0.92)', padding: '0.55rem 0.85rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', maxWidth: '270px'}}>
+          {showChangesOnly ? (
+            !isQpso ? (
+              <>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                  <div style={{width: '14px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
+                  <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded Chokepoints (Relieved)</span>
+                </div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                  <span style={{color: '#ef4444', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
+                  <span style={{color: '#fca5a5'}}>Relieved Bottleneck Flow</span>
+                </div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                  <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                  <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-overloaded roads</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                  <div style={{width: '14px', height: '4px', backgroundColor: '#06b6d4', borderRadius: '2px'}}></div>
+                  <span style={{color: '#a5f3fc', fontWeight: 600}}>Parallel Bypass Corridors (+Flow)</span>
+                </div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
+                  <span style={{color: '#06b6d4', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
+                  <span style={{color: '#a5f3fc'}}>Q-ROUTE Optimized Bypass Flow</span>
+                </div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                  <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                  <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-diverted roads</span>
+                </div>
+              </>
+            )
+          ) : (
+            <>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
+                <span style={{color: 'var(--text-secondary)'}}>Gray = No simulated traffic (0 veh)</span>
+              </div>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                <div style={{width: '14px', height: '5px', backgroundColor: '#10b981', borderRadius: '2px'}}></div>
+                <span style={{color: '#a7f3d0', fontWeight: 500}}>Free-flowing (&lt;70% V/C)</span>
+              </div>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                <div style={{width: '14px', height: '5px', backgroundColor: '#fbbf24', borderRadius: '2px'}}></div>
+                <span style={{color: '#fde68a', fontWeight: 500}}>Moderate (70–100% V/C)</span>
+              </div>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+                <div style={{width: '14px', height: '5px', backgroundColor: '#ff334b', borderRadius: '2px'}}></div>
+                <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded (&gt;100% V/C)</span>
+              </div>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
+                <span style={{color: isQpso ? '#06b6d4' : '#ef4444', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
+                <span style={{color: isQpso ? '#a5f3fc' : '#fca5a5', fontWeight: 500}}>
+                  {isQpso ? 'Q-ROUTE Bypass Flow Direction' : 'Relieved Bottleneck Flow Direction'}
+                </span>
+              </div>
+            </>
+          )}
             </div>
           </div>
         </div>
