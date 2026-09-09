@@ -183,8 +183,13 @@ def apply_what_if(local_edge_data, modified_capacities):
     
     for i, (u, v, k) in enumerate(new_edge_data['edges']):
         key = f"{u}_{v}_{k}"
-        if key in modified_capacities:
-            new_edge_data['capacities'][i] = float(modified_capacities[key])
+        rev_key = f"{v}_{u}_{k}"
+        if key in modified_capacities or rev_key in modified_capacities:
+            cap_val = float(modified_capacities.get(key, modified_capacities.get(rev_key, 0.0)))
+            new_edge_data['capacities'][i] = cap_val
+            if cap_val <= 0.0:
+                # Road closed: increase free-flow time by 10,000x to strictly force detour
+                new_edge_data['free_flow_times'][i] = float(local_edge_data['free_flow_times'][i]) * 10000.0
             
     return new_edge_data
 

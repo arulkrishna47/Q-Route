@@ -350,9 +350,15 @@ function App() {
   const handleEdgeClick = (edge: any) => {
     if (!whatIfMode) return;
     const key = `${edge.u}_${edge.v}_${edge.k}`;
+    const revKey = `${edge.v}_${edge.u}_${edge.k}`;
     const newCaps = { ...modifiedCapacities };
-    if (newCaps[key] === 0) delete newCaps[key];
-    else newCaps[key] = 0;
+    if (newCaps[key] === 0 || newCaps[revKey] === 0) {
+      delete newCaps[key];
+      delete newCaps[revKey];
+    } else {
+      newCaps[key] = 0;
+      newCaps[revKey] = 0;
+    }
     setModifiedCapacities(newCaps);
   };
   
@@ -716,43 +722,46 @@ function App() {
         <div style={{flex: 1, position: 'relative', minHeight: '380px'}}>
           <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0}}>
             {/* Step 3: What-If Road Closure On-Map Guidance Banner */}
+            {/* Step 3: What-If Road Closure On-Map Guidance Banner */}
             {whatIfMode && (
               <div style={{
                 position: 'absolute',
-                top: '12px',
+                top: '8px',
                 left: '50%',
                 transform: 'translateX(-50%)',
                 zIndex: 1000,
-                backgroundColor: Object.keys(modifiedCapacities).length === 0 ? 'rgba(239, 68, 68, 0.95)' : 'rgba(185, 28, 28, 0.95)',
+                backgroundColor: 'rgba(15, 23, 42, 0.94)',
                 color: '#ffffff',
-                padding: '0.45rem 1.15rem',
-                borderRadius: '24px',
-                fontWeight: 600,
-                fontSize: '0.85rem',
-                boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+                padding: '0.25rem 0.85rem',
+                borderRadius: '16px',
+                fontWeight: 500,
+                fontSize: '0.75rem',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.65rem',
+                gap: '0.5rem',
                 pointerEvents: 'auto',
-                border: '1px solid rgba(255,255,255,0.25)'
+                border: '1px solid rgba(255,255,255,0.2)'
               }}>
                 {Object.keys(modifiedCapacities).length === 0 ? (
                   <>
-                    <AlertTriangle size={16} /> Click any road segment on the map to simulate closing it
+                    <AlertTriangle size={13} style={{color: '#f87171'}} /> Click any road segment to simulate closing it
                   </>
                 ) : (
                   <>
-                    <span>🚧 <strong>{Object.keys(modifiedCapacities).length}</strong> road segment(s) closed (dashed red lines). Click "RUN OPTIMIZATION" to calculate detours.</span>
+                    <span>🚧 <strong>{Math.round(Object.keys(modifiedCapacities).length / 2)}</strong> road(s) closed {qpsoRes ? '— Detour plan active' : '— Click "RUN OPTIMIZATION"'}</span>
                     <button 
                       className="btn" 
                       style={{
-                        padding: '0.15rem 0.55rem', 
+                        padding: '0.1rem 0.45rem', 
                         margin: 0, 
-                        fontSize: '0.75rem', 
-                        backgroundColor: '#ffffff', 
-                        color: '#dc2626', 
-                        fontWeight: 700,
-                        borderRadius: '12px'
+                        fontSize: '0.7rem', 
+                        backgroundColor: '#ef4444', 
+                        color: '#ffffff', 
+                        fontWeight: 600,
+                        borderRadius: '10px',
+                        border: 'none',
+                        cursor: 'pointer'
                       }} 
                       onClick={() => setModifiedCapacities({})}
                     >
@@ -778,8 +787,9 @@ function App() {
                 if (!u || !v) return null;
                 
                 const key = `${edge.u}_${edge.v}_${edge.k}`;
-                const isClosed = modifiedCapacities[key] === 0;
-                const edgeCap = modifiedCapacities[key] !== undefined ? modifiedCapacities[key] : edge.capacity;
+                const revKey = `${edge.v}_${edge.u}_${edge.k}`;
+                const isClosed = modifiedCapacities[key] === 0 || modifiedCapacities[revKey] === 0;
+                const edgeCap = modifiedCapacities[key] !== undefined ? modifiedCapacities[key] : (modifiedCapacities[revKey] !== undefined ? modifiedCapacities[revKey] : edge.capacity);
                 
                 let vol = 0;
                 if (resultData && resultData.edge_volumes) {
@@ -1150,18 +1160,27 @@ function App() {
                       {costImproved ? `${costDiffPercent.toFixed(1)}% more efficient network` : `${costDiffPercent.toFixed(1)}% less efficient network`}
                     </span>
                     <span className="impact-stat-label">Overall Network Efficiency</span>
+                    <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'var(--font-mono, monospace)'}}>
+                      Score: {baselineRes.fitness.toFixed(1)} → {qpsoRes.fitness.toFixed(1)}
+                    </span>
                   </div>
                   <div className="impact-stat">
                     <span className="impact-stat-value" style={{color: timeSavedMins >= 0 ? 'var(--status-good)' : 'var(--status-warn)'}}>
                       {timeSavedMins >= 0 ? `${Math.round(timeSavedMins)} minutes saved` : `${Math.abs(Math.round(timeSavedMins))} fewer minutes of congestion delay`}
                     </span>
                     <span className="impact-stat-label">Across all vehicles</span>
+                    <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'var(--font-mono, monospace)'}}>
+                      Base: ~{Math.round(baselineRes.metrics.total_travel_time/3600)}h → Opt: ~{Math.round(qpsoRes.metrics.total_travel_time/3600)}h
+                    </span>
                   </div>
                   <div className="impact-stat">
                     <span className="impact-stat-value" style={{color: bottlenecksResolved > 0 ? 'var(--status-good)' : (bottlenecksResolved === 0 ? 'inherit' : 'var(--status-critical)')}}>
                       {bottlenecksResolved > 0 ? `${bottlenecksResolved} bottlenecks resolved` : (bottlenecksResolved === 0 ? (baselineRes.metrics.capacity_violations_count === 0 ? `No roads over capacity — this scenario had no bottlenecks to begin with.` : `Bottlenecks remain unchanged`) : `${Math.abs(bottlenecksResolved)} more bottlenecks created`)}
                     </span>
                     <span className="impact-stat-label">Roads over capacity</span>
+                    <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'var(--font-mono, monospace)'}}>
+                      Base: {baselineRes.metrics.capacity_violations_count} → Opt: {qpsoRes.metrics.capacity_violations_count} corridors
+                    </span>
                   </div>
                 </div>
                 {explanationText && (
