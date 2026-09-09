@@ -6,7 +6,10 @@ import 'leaflet/dist/leaflet.css';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceDot } from 'recharts';
 import { Activity, Map as MapIcon, Sliders, Database, Info, GitMerge, FileText, Settings, HelpCircle, AlertTriangle, Send, Zap, Layout, Download, Search, RefreshCw, CheckCircle } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://localhost:8000');
+const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const API_BASE = isLocalhost 
+  ? (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000')
+  : (import.meta.env.VITE_API_BASE_URL && !import.meta.env.VITE_API_BASE_URL.includes('localhost') ? import.meta.env.VITE_API_BASE_URL : '/api');
 
 const OPERATING_MODES = [
   { id: 'standard', name: 'Standard', desc: 'Balanced operation — the default for normal conditions.', weights: { time: 1.0, congestion: 1.0, co2: 1.0, penalty: 10.0 } },
@@ -151,6 +154,7 @@ function App() {
   const [focusedEdgeKey, setFocusedEdgeKey] = useState<string | null>(null);
   const [mapTargetCenter, setMapTargetCenter] = useState<[number, number] | null>(null);
   const [showMinorFlows, setShowMinorFlows] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLocations();
@@ -246,16 +250,26 @@ function App() {
   const fetchLocations = async () => {
     try {
       const res = await axios.get(`${API_BASE}/locations`);
-      setLocations(res.data);
-      if (res.data.length > 0) {
+      if (res.data && res.data.length > 0) {
+        setLocations(res.data);
         const def = res.data.find((l: any) => l.id === 'mylapore') || res.data[0];
         setActiveLocation(def.id);
+        return;
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error("fetchLocations failed, using defaults:", e); 
+    }
+    // Fallback: ensure app always initializes default locations
+    setLocations([
+      { id: 'mylapore', name: 'Mylapore, Chennai, India' },
+      { id: 'koramangala', name: 'Koramangala, Bengaluru, India' }
+    ]);
+    setActiveLocation('mylapore');
   };
 
   const fetchNetwork = async (loc: string) => {
     setLoading(true);
+    setInitError(null);
     try {
       const res = await axios.get(`${API_BASE}/network?location=${loc}`);
       const cleanNetwork = {
@@ -272,8 +286,9 @@ function App() {
       setPreOptState(baseRes.data);
       
       setLoading(false);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error("fetchNetwork error:", e);
+      setInitError(e?.message || "Failed to connect to traffic optimization backend.");
       setLoading(false);
     }
   };
@@ -408,7 +423,73 @@ function App() {
     }
   };
 
-  if (loading) return <div className="p-8">Loading Network Data...</div>;
+  if (loading || (!network && !initError)) {
+    return (
+      <div style={{
+        display: 'flex', 
+        flexDirection: 'column', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        height: '100vh', 
+        backgroundColor: '#0b1120', 
+        color: '#f1f5f9',
+        fontFamily: 'system-ui, sans-serif',
+        textAlign: 'center',
+        padding: '2rem'
+      }}>
+        <div style={{
+          width: '42px', 
+          height: '42px', 
+          border: '4px solid #334155', 
+          borderTopColor: '#38bdf8', 
+          borderRadius: '50%', 
+          animation: 'spin 1s linear infinite',
+          marginBottom: '1.5rem'
+        }} />
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#38bdf8', margin: '0 0 0.5rem 0' }}>
+          Loading Urban Network Data...
+        </h2>
+        <p style={{ color: '#94a3b8', fontSize: '0.875rem', maxWidth: '420px', lineHeight: 1.5, margin: '0 0 1.5rem 0' }}>
+          Ingesting OpenStreetMap road geometry, IRC lane capacities, and baseline congestion matrix.
+        </p>
+      </div>
+    );
+  }
+
+  if (initError && !network) {
+    return (
+      <div style={{
+        display: 'flex', 
+        flexDirection: 'column', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        height: '100vh', 
+        backgroundColor: '#0b1120', 
+        color: '#f1f5f9',
+        fontFamily: 'system-ui, sans-serif',
+        textAlign: 'center',
+        padding: '2rem'
+      }}>
+        <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚠️</div>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#f87171', margin: '0 0 0.5rem 0' }}>
+          Unable to Connect to Traffic Optimization Engine
+        </h2>
+        <p style={{ color: '#94a3b8', fontSize: '0.875rem', maxWidth: '460px', lineHeight: 1.5, margin: '0 0 1.5rem 0' }}>
+          {initError}. Please verify the backend API server is active and accessible.
+        </p>
+        <button 
+          className="btn btn-primary"
+          style={{ width: 'auto', padding: '0.5rem 1.5rem' }}
+          onClick={() => {
+            if (activeLocation) fetchNetwork(activeLocation);
+            else fetchLocations();
+          }}
+        >
+          🔄 Retry Connection
+        </button>
+      </div>
+    );
+  }
 
   let costDiffPercent = 0;
   let costImproved = false;
