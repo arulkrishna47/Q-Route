@@ -35,37 +35,6 @@ const advisoryIcon = new L.DivIcon({
   iconAnchor: [14, 14]
 });
 
-function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const lat1Rad = (lat1 * Math.PI) / 180;
-  const lat2Rad = (lat2 * Math.PI) / 180;
-  const y = Math.sin(dLon) * Math.cos(lat2Rad);
-  const x =
-    Math.cos(lat1Rad) * Math.sin(lat2Rad) -
-    Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-  const brng = (Math.atan2(y, x) * 180) / Math.PI;
-  return (brng + 360) % 360;
-}
-
-const arrowIconCache: Record<string, L.DivIcon> = {};
-
-function getArrowIcon(bearing: number, color: string): L.DivIcon {
-  const roundedBearing = Math.round(bearing / 5) * 5;
-  const key = `${roundedBearing}_${color}`;
-  if (!arrowIconCache[key]) {
-    arrowIconCache[key] = new L.DivIcon({
-      className: 'flow-arrow-marker',
-      html: `<div style="transform: rotate(${roundedBearing}deg); display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; pointer-events: none;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="${color}" stroke="#0f172a" stroke-width="1.5" stroke-linejoin="round" style="filter: drop-shadow(0 0 4px ${color});">
-          <path d="M12 2L19 19L12 15L5 19L12 2Z" />
-        </svg>
-      </div>`,
-      iconSize: [22, 22],
-      iconAnchor: [11, 11],
-    });
-  }
-  return arrowIconCache[key];
-}
 
 
 function MapClickHandler({ onEdgeClick, network }: any) {
@@ -900,14 +869,6 @@ function App() {
                   color = '#ff334b';
                 }
                 
-                const hasValidCoords = u && v && (u.lat !== v.lat || u.lon !== v.lon);
-                const showArrow = !isClosed && hasValidCoords && (
-                  (isQpso && (diff > 1.5 || (showChangesOnly && diff > 1))) ||
-                  (!isQpso && (diff < -1.5 || (showChangesOnly && diff < -1)))
-                );
-                const arrowColor = isQpso ? '#06b6d4' : '#ef4444';
-                const bearing = hasValidCoords ? calculateBearing(u.lat, u.lon, v.lat, v.lon) : 0;
-                
                 return (
                   <React.Fragment key={i}>
                     <Polyline 
@@ -972,13 +933,6 @@ function App() {
                       </div>
                   </Tooltip>
                 </Polyline>
-                {showArrow && (
-                  <Marker 
-                    position={[(u.lat + v.lat) / 2, (u.lon + v.lon) / 2]} 
-                    icon={getArrowIcon(bearing, arrowColor)}
-                    interactive={false}
-                  />
-                )}
                 {isClosed && (
                   <CircleMarker 
                     center={[(u.lat + v.lat)/2, (u.lon + v.lon)/2]} 
@@ -1015,10 +969,6 @@ function App() {
                   <div style={{width: '14px', height: '4px', backgroundColor: '#ef4444', borderRadius: '2px'}}></div>
                   <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded Chokepoints (Relieved)</span>
                 </div>
-                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
-                  <span style={{color: '#ef4444', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
-                  <span style={{color: '#fca5a5'}}>Relieved Bottleneck Flow</span>
-                </div>
                 <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
                   <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
                   <span style={{color: 'var(--text-secondary)'}}>Unchanged / non-overloaded roads</span>
@@ -1029,10 +979,6 @@ function App() {
                 <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
                   <div style={{width: '14px', height: '4px', backgroundColor: '#06b6d4', borderRadius: '2px'}}></div>
                   <span style={{color: '#a5f3fc', fontWeight: 600}}>Parallel Bypass Corridors (+Flow)</span>
-                </div>
-                <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px'}}>
-                  <span style={{color: '#06b6d4', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
-                  <span style={{color: '#a5f3fc'}}>Q-ROUTE Optimized Bypass Flow</span>
                 </div>
                 <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
                   <div style={{width: '14px', height: '3px', backgroundColor: '#334155', borderRadius: '2px'}}></div>
@@ -1054,15 +1000,9 @@ function App() {
                 <div style={{width: '14px', height: '5px', backgroundColor: '#fbbf24', borderRadius: '2px'}}></div>
                 <span style={{color: '#fde68a', fontWeight: 500}}>Moderate (70–100% V/C)</span>
               </div>
-              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
                 <div style={{width: '14px', height: '5px', backgroundColor: '#ff334b', borderRadius: '2px'}}></div>
                 <span style={{color: '#fca5a5', fontWeight: 600}}>Overloaded (&gt;100% V/C)</span>
-              </div>
-              <div style={{display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
-                <span style={{color: isQpso ? '#06b6d4' : '#ef4444', fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1}}>➤</span>
-                <span style={{color: isQpso ? '#a5f3fc' : '#fca5a5', fontWeight: 500}}>
-                  {isQpso ? 'Q-ROUTE Bypass Flow Direction' : 'Relieved Bottleneck Flow Direction'}
-                </span>
               </div>
             </>
           )}
