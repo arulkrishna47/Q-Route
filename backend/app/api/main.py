@@ -88,33 +88,45 @@ def load_data():
             except Exception as e:
                 print(f"Error loading location {item}: {e}")
 
+in_memory_experiments = {}
+
 def save_experiment(algo, weights, result, scenario="default", suggestion_shown=None, suggestion_followed=None, location=None):
     if not location: return
-    loc_dir = os.path.join(DATA_DIR, location)
-    os.makedirs(loc_dir, exist_ok=True)
-    exp_file = os.path.join(loc_dir, 'experiments.json')
-    history = []
-    if os.path.exists(exp_file):
-        try:
-            with open(exp_file) as f:
-                history = json.load(f)
-        except:
-            pass
-            
-    history.append({
+    
+    entry = {
         'timestamp': datetime.datetime.now().isoformat(),
         'algorithm': algo,
         'scenario': scenario,
         'weights': weights,
-        'fitness': result['fitness'],
-        'metrics': result['metrics'],
-        'runtime': result['runtime'],
+        'fitness': result.get('fitness', 0),
+        'metrics': result.get('metrics', {}),
+        'runtime': result.get('runtime', 0),
         'suggestion_shown': suggestion_shown,
         'suggestion_followed': suggestion_followed
-    })
+    }
     
-    with open(exp_file, 'w') as f:
-        json.dump(history, f, indent=2)
+    if location not in in_memory_experiments:
+        in_memory_experiments[location] = []
+    in_memory_experiments[location].append(entry)
+    
+    try:
+        loc_dir = os.path.join(DATA_DIR, location)
+        os.makedirs(loc_dir, exist_ok=True)
+        exp_file = os.path.join(loc_dir, 'experiments.json')
+        history = []
+        if os.path.exists(exp_file):
+            try:
+                with open(exp_file) as f:
+                    history = json.load(f)
+            except Exception:
+                pass
+                
+        history.append(entry)
+        
+        with open(exp_file, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception as e:
+        print(f"Notice: read-only or restricted filesystem ({e}), stored experiment in memory.")
 
 @app.on_event("startup")
 def startup_event():
@@ -220,11 +232,18 @@ def run_ga(weights: WeightsParams, location: str = 'mylapore', pop_size: int = 2
 @router.get("/experiments")
 def get_experiments(location: str = 'mylapore'):
     if not location: return []
+    file_history = []
     exp_file = os.path.join(DATA_DIR, location, 'experiments.json')
     if os.path.exists(exp_file):
-        with open(exp_file) as f:
-            return json.load(f)
-    return []
+        try:
+            with open(exp_file) as f:
+                file_history = json.load(f)
+        except Exception:
+            pass
+    mem_history = in_memory_experiments.get(location, [])
+    if mem_history:
+        return file_history + [m for m in mem_history if m not in file_history]
+    return file_history
 
 @router.post("/benchmark")
 def run_benchmarks(weights: WeightsParams, location: str = 'mylapore', seeds: int = 10, multiplier: float = 1.0):

@@ -155,6 +155,7 @@ function App() {
   const [mapTargetCenter, setMapTargetCenter] = useState<[number, number] | null>(null);
   const [showMinorFlows, setShowMinorFlows] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [optError, setOptError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLocations();
@@ -302,6 +303,7 @@ function App() {
 
   const runOptimization = async () => {
     setOptimizing(true);
+    setOptError(null);
     try {
       let isFollowed = null;
       if (suggestion) {
@@ -326,8 +328,9 @@ function App() {
       setIsPlaying(false);
       fetchHistory(activeLocation);
       if (viewMode === 'analyst') setActiveTab('comparison');
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error("Optimization failed:", e);
+      setOptError(e?.response?.data?.detail || e?.message || "Optimization request failed");
     }
     setOptimizing(false);
   };
@@ -1094,6 +1097,20 @@ function App() {
             <button className="btn btn-primary" onClick={runOptimization} disabled={optimizing} style={{marginTop: '0.5rem'}}>
               {optimizing ? <><span className="loader"></span> Computing QPSO...</> : 'RUN OPTIMIZATION'}
             </button>
+            {optError && (
+              <div style={{
+                marginTop: '0.5rem',
+                padding: '0.5rem 0.65rem',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid var(--status-critical)',
+                color: '#fca5a5',
+                fontSize: '0.75rem',
+                lineHeight: 1.4
+              }}>
+                ⚠️ {optError}
+              </div>
+            )}
             
             <div style={{marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)'}}>
               <label style={{display: 'flex', alignItems: 'center', fontSize: '0.85rem', cursor: 'pointer', color: whatIfMode ? 'var(--status-warn)' : 'var(--text-secondary)'}}>
